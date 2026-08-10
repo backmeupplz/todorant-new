@@ -57,6 +57,8 @@ export TEST_DATABASE_URL
 
 pnpm db:migrate
 pnpm --filter @todorant/api test:integration
+pnpm --filter @todorant/api exec node --input-type=module -e \
+  'import { PgBoss } from "pg-boss"; const boss = new PgBoss(process.env.DATABASE_URL); await boss.start(); await boss.stop({ graceful: true });'
 
 MIGRATION_DATABASE_URL=$DATABASE_URL
 DATABASE_RUNTIME_PASSWORD=fixture-runtime-password-that-is-at-least-32-characters

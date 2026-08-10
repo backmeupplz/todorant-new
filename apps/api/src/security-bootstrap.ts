@@ -70,6 +70,15 @@ try {
       `alter ${objectType} ${identifier("pgboss")}.${identifier(relation.name)} owner to ${identifier(bossRole)}`
     );
   }
+  const types = await pool.query<{ name: string }>(
+    "select t.typname as name from pg_type t join pg_namespace n on n.oid = t.typnamespace " +
+      "where n.nspname = 'pgboss' and t.typtype in ('e', 'd')"
+  );
+  for (const type of types.rows) {
+    await pool.query(
+      `alter type ${identifier("pgboss")}.${identifier(type.name)} owner to ${identifier(bossRole)}`
+    );
+  }
   const functions = await pool.query<{ name: string; arguments: string }>(
     "select p.proname as name, pg_get_function_identity_arguments(p.oid) as arguments " +
       "from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'pgboss'"

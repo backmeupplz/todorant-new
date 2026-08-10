@@ -51,5 +51,11 @@ suite("least-privilege PostgreSQL roles", () => {
         rolbypassrls: false
       });
     }
+    const owners = await admin.query<{ owner: string }>(
+      "select r.rolname as owner from pg_type t join pg_namespace n on n.oid = t.typnamespace " +
+        "join pg_roles r on r.oid = t.typowner where n.nspname = 'pgboss' and t.typtype = 'e'"
+    );
+    expect(owners.rows.length).toBeGreaterThan(0);
+    expect(new Set(owners.rows.map((row) => row.owner))).toEqual(new Set(["todorant_boss"]));
   });
 });
