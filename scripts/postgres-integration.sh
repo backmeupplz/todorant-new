@@ -27,7 +27,8 @@ export DATABASE_URL
 TEST_DATABASE_URL=$DATABASE_URL
 export TEST_DATABASE_URL
 
-pnpm db:migrate
+pnpm --filter @todorant/api build
+MIGRATION_DATABASE_URL="$DATABASE_URL" node apps/api/dist/migrate.js
 pnpm --filter @todorant/api test:integration
 pnpm --filter @todorant/api exec node --input-type=module -e \
   'import { PgBoss } from "pg-boss"; const boss = new PgBoss(process.env.DATABASE_URL); await boss.start(); await boss.stop({ graceful: true });'
@@ -36,7 +37,6 @@ MIGRATION_DATABASE_URL=$DATABASE_URL
 DATABASE_RUNTIME_PASSWORD=fixture-runtime-password-that-is-at-least-32-characters
 DATABASE_BOSS_PASSWORD=fixture-boss-password-that-is-at-least-32-characters
 export MIGRATION_DATABASE_URL DATABASE_RUNTIME_PASSWORD DATABASE_BOSS_PASSWORD
-pnpm --filter @todorant/api build
 node apps/api/dist/security-bootstrap.js
 TEST_RUNTIME_DATABASE_URL="postgresql://todorant_runtime:$DATABASE_RUNTIME_PASSWORD@127.0.0.1:$pg_port/todorant_test"
 TEST_BOSS_DATABASE_URL="postgresql://todorant_boss:$DATABASE_BOSS_PASSWORD@127.0.0.1:$pg_port/todorant_test"
