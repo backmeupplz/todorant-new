@@ -5,6 +5,9 @@ read-only path to the legacy database. Security changes should preserve the
 local-first experience while treating the browser, network, and every client
 operation as untrusted.
 
+The dated production review and verification evidence is recorded in
+[`security-audit-2026-08-10.md`](security-audit-2026-08-10.md).
+
 ## Implemented controls
 
 - Passwords use Argon2id with 64 MiB memory, three iterations, and independent
