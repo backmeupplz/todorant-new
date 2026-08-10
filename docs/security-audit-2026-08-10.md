@@ -19,7 +19,7 @@ services, Cloudflare edge, and backup recoverability for `new.todorant.com`.
 | Medium | The dependency policy delayed new releases for only one day and did not enforce trust-downgrade/exotic-source checks. | Fixed with a seven-day policy, exact reviewed exceptions, no-downgrade verification, and blocked exotic transitive sources. |
 | Low | Password hashes used the lower OWASP Argon2id baseline and old hashes were never upgraded. | Fixed with 64 MiB/three iterations and successful-login rehashing. |
 | Low | Session token hashing used concatenation rather than a standard MAC; cookies lacked the production `__Host-` prefix. | Fixed with HMAC-SHA-256 and `__Host-`, `Secure`, `HttpOnly`, strict same-site cookies. Existing sessions intentionally expire at rollout. |
-| Low | Local Compose exposed PostgreSQL on every host interface and the web image ran Caddy as root. | Fixed with loopback binding and a dedicated unprivileged Caddy user. |
+| Low | Local Compose exposed PostgreSQL on every host interface, while the web and API images ran as root. | Fixed with loopback binding and dedicated unprivileged runtime users. |
 
 ## Verified controls
 

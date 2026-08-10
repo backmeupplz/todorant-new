@@ -31,6 +31,8 @@ The dated production review and verification evidence is recorded in
   pg-boss use separate roles. The runtime role has CRUD access to application
   tables but no role, database, or schema creation rights; the job role owns
   only the `pgboss` schema.
+- The production API and frontend images are digest-pinned, contain only their
+  required runtime payload, and run as unprivileged users.
 - The legacy Mongo connection is accepted only with an explicitly read-only
   URI and verified read privileges. Imported secret/token fields are stripped.
 - Production dependencies are version-locked and container bases are digest
