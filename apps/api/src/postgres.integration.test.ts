@@ -176,6 +176,21 @@ suite("PostgreSQL REST and WebSocket synchronization", () => {
       headers: { cookie: delegate.cookie }
     });
     expect(revokedSnapshot.json().tasks).toHaveLength(0);
+    expect(revokedSnapshot.json().events).toHaveLength(0);
+
+    const revokedHistory = await app.inject({
+      method: "GET",
+      url: `/api/tasks/${taskId}/history`,
+      headers: { cookie: delegate.cookie }
+    });
+    expect(revokedHistory.statusCode).toBe(404);
+
     websocket.close();
+    const freshWebsocket = await app.injectWS("/ws?cursor=0", { headers: { cookie: delegate.cookie } });
+    const firstFreshMessage = new Promise<Record<string, unknown>>((resolve) => {
+      freshWebsocket.once("message", (data: Buffer) => resolve(JSON.parse(String(data)) as Record<string, unknown>));
+    });
+    await expect(firstFreshMessage).resolves.toMatchObject({ type: "ready" });
+    freshWebsocket.close();
   });
 });

@@ -49,10 +49,13 @@ export class MemoryDataStore implements DataStore {
   }
 
   async snapshot(userId: string, afterCursor: number) {
-    const events = this.events.filter((event) => event.cursor > afterCursor && event.task.userId === userId);
     const tasks = [...this.tasks.values()]
       .filter((task) => task.userId === userId || task.delegateId === userId)
       .sort((a, b) => compareRanks(a.rank, b.rank));
+    const accessibleTasks = new Set(tasks.map((task) => `${task.userId}:${task.id}`));
+    const events = this.events.filter(
+      (event) => event.cursor > afterCursor && accessibleTasks.has(`${event.task.userId}:${event.task.id}`)
+    );
     return { tasks, events, cursor: this.events.at(-1)?.cursor ?? 0 };
   }
 
@@ -122,8 +125,12 @@ export class MemoryDataStore implements DataStore {
   }
 
   async history(userId: string, taskId: string): Promise<SyncEvent[]> {
+    const current = [...this.tasks.values()].find(
+      (task) => task.id === taskId && (task.userId === userId || task.delegateId === userId)
+    );
+    if (!current) return [];
     return this.events.filter(
-      (event) => (event.task.userId === userId || event.task.delegateId === userId) && event.task.id === taskId
+      (event) => event.task.id === taskId && event.task.userId === current.userId
     );
   }
 

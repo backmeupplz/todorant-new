@@ -62,14 +62,39 @@ const removeTask = async (taskId: string) => {
   tasks.value = tasks.value.filter((task) => task.id !== taskId);
 };
 
-const applyEvent = async (event: SyncEvent) => {
-  if (event.cursor <= await cursor()) return;
+const revokeLocalTaskAccess = async (taskId: string) => {
   const db = await localDb();
-  const pendingForTask = (await db.getAll("operations")).some((operation) => operation.taskId === event.task.id);
+  const [operations, storedConflicts] = await Promise.all([
+    db.getAll("operations"),
+    db.getAll("conflicts")
+  ]);
+  await Promise.all([
+    db.delete("tasks", taskId),
+    ...operations.filter((operation) => operation.taskId === taskId).map((operation) => db.delete("operations", operation.operationId)),
+    ...storedConflicts.filter((conflict) => conflict.taskId === taskId).map((conflict) => db.delete("conflicts", conflict.id))
+  ]);
+  tasks.value = tasks.value.filter((task) => task.id !== taskId);
+  conflicts.value = conflicts.value.filter((conflict) => conflict.taskId !== taskId);
+  syncErrors.value = syncErrors.value.filter((operation) => operation.taskId !== taskId);
+  pendingCount.value = await db.count("operations");
+};
+
+export const applyEvent = async (event: SyncEvent, userId = activeUser) => {
+  const db = await localDb();
+  if (!canAccessTask(event.task, userId)) {
+    await revokeLocalTaskAccess(event.task.id);
+    await setCursor(event.cursor);
+    return;
+  }
+  if (event.cursor <= await cursor()) return;
+  const operations = await db.getAll("operations");
+  const pendingForTask = operations.some((operation) => operation.taskId === event.task.id);
   await saveConflict(event.conflict);
-  if (pendingForTask) return;
-  if (canAccessTask(event.task, activeUser)) await saveTask(event.task, true);
-  else await removeTask(event.task.id);
+  if (pendingForTask) {
+    await setCursor(event.cursor);
+    return;
+  }
+  await saveTask(event.task, true);
   await setCursor(event.cursor);
 };
 
@@ -265,21 +290,29 @@ export async function flush(): Promise<void> {
   }
 }
 
-export async function pull(force = false): Promise<void> {
-  const localCursor = await cursor();
-  const snapshot = await request<{ tasks: Task[]; events: SyncEvent[]; cursor: number }>(
-    `/api/snapshot?cursor=${localCursor}`
-  );
+type Snapshot = { tasks: Task[]; events: SyncEvent[]; cursor: number };
+
+export async function applySnapshot(snapshot: Snapshot, force = false): Promise<void> {
   const db = await localDb();
   const accessibleIds = new Set(snapshot.tasks.map((task) => task.id));
-  const pendingIds = new Set((await db.getAll("operations")).map((operation) => operation.taskId));
+  const operations = await db.getAll("operations");
   for (const localTask of await db.getAll("tasks")) {
-    if (!accessibleIds.has(localTask.id) && !pendingIds.has(localTask.id)) await removeTask(localTask.id);
+    if (accessibleIds.has(localTask.id)) continue;
+    const pending = operations.filter((operation) => operation.taskId === localTask.id);
+    if (pending.some((operation) => operation.command === "create")) continue;
+    if (pending.length) await revokeLocalTaskAccess(localTask.id);
+    else await removeTask(localTask.id);
   }
   for (const task of snapshot.tasks) await saveTask(task, force);
   for (const event of snapshot.events) await applyEvent(event);
   await setCursor(snapshot.cursor);
   if (force) await replayAllPending();
+}
+
+export async function pull(force = false): Promise<void> {
+  const localCursor = await cursor();
+  const snapshot = await request<Snapshot>(`/api/snapshot?cursor=${localCursor}`);
+  await applySnapshot(snapshot, force);
 }
 
 const connect = async () => {

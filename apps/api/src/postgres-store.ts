@@ -62,11 +62,15 @@ export class PostgresDataStore implements DataStore {
         .where(or(eq(schema.tasks.userId, userId), eq(schema.tasks.delegateId, userId)))
         .orderBy(asc(schema.tasks.rank)),
       this.db
-        .select()
+        .select({ event: schema.taskEvents })
         .from(schema.taskEvents)
+        .innerJoin(
+          schema.tasks,
+          and(eq(schema.taskEvents.userId, schema.tasks.userId), eq(schema.taskEvents.taskId, schema.tasks.id))
+        )
         .where(
           and(
-            or(eq(schema.taskEvents.userId, userId), eq(schema.taskEvents.delegateId, userId)),
+            or(eq(schema.tasks.userId, userId), eq(schema.tasks.delegateId, userId)),
             gt(schema.taskEvents.cursor, afterCursor)
           )
         )
@@ -74,17 +78,21 @@ export class PostgresDataStore implements DataStore {
       this.db
         .select({ cursor: schema.taskEvents.cursor })
         .from(schema.taskEvents)
-        .where(or(eq(schema.taskEvents.userId, userId), eq(schema.taskEvents.delegateId, userId)))
+        .innerJoin(
+          schema.tasks,
+          and(eq(schema.taskEvents.userId, schema.tasks.userId), eq(schema.taskEvents.taskId, schema.tasks.id))
+        )
+        .where(or(eq(schema.tasks.userId, userId), eq(schema.tasks.delegateId, userId)))
         .orderBy(desc(schema.taskEvents.cursor))
         .limit(1)
     ]);
     return {
       tasks: taskRows.map((row) => row.state),
-      events: eventRows.map((row) => ({
-        cursor: row.cursor,
-        task: row.state,
-        conflict: row.conflict ?? null,
-        operationId: row.operationId
+      events: eventRows.map(({ event }) => ({
+        cursor: event.cursor,
+        task: event.state,
+        conflict: event.conflict ?? null,
+        operationId: event.operationId
       })),
       cursor: cursorRows[0]?.cursor ?? 0
     };
@@ -234,20 +242,24 @@ export class PostgresDataStore implements DataStore {
 
   async history(userId: string, taskId: string): Promise<SyncEvent[]> {
     const rows = await this.db
-      .select()
+      .select({ event: schema.taskEvents })
       .from(schema.taskEvents)
+      .innerJoin(
+        schema.tasks,
+        and(eq(schema.taskEvents.userId, schema.tasks.userId), eq(schema.taskEvents.taskId, schema.tasks.id))
+      )
       .where(
         and(
           eq(schema.taskEvents.taskId, taskId),
-          or(eq(schema.taskEvents.userId, userId), eq(schema.taskEvents.delegateId, userId))
+          or(eq(schema.tasks.userId, userId), eq(schema.tasks.delegateId, userId))
         )
       )
       .orderBy(asc(schema.taskEvents.cursor));
-    return rows.map((row) => ({
-      cursor: row.cursor,
-      task: row.state,
-      conflict: row.conflict ?? null,
-      operationId: row.operationId
+    return rows.map(({ event }) => ({
+      cursor: event.cursor,
+      task: event.state,
+      conflict: event.conflict ?? null,
+      operationId: event.operationId
     }));
   }
 

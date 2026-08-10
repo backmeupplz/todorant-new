@@ -9,7 +9,7 @@ import {
   setCursor,
   type PendingOperation
 } from "./db.js";
-import { api, canAccessTask, isRetryableFailure, optimisticTask, RequestFailure, tasks } from "./sync.js";
+import { api, applyEvent, applySnapshot, canAccessTask, conflicts, isRetryableFailure, optimisticTask, pendingCount, RequestFailure, tasks } from "./sync.js";
 
 const operation = (
   operationId: string,
@@ -32,6 +32,8 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   await deactivateLocalUser();
   tasks.value = [];
+  conflicts.value = [];
+  pendingCount.value = 0;
 });
 
 describe("per-user IndexedDB replica", () => {
@@ -87,6 +89,76 @@ describe("per-user IndexedDB replica", () => {
     expect(canAccessTask(task, delegateId)).toBe(true);
     expect(canAccessTask({ ...task, delegateId: null }, delegateId)).toBe(false);
     expect(canAccessTask({ ...task, delegateId: null }, ownerId)).toBe(true);
+  });
+
+  it("purges IndexedDB state and queued edits when a revocation event arrives", async () => {
+    const ownerId = "00000000-0000-4000-8000-000000000221";
+    const delegateId = "00000000-0000-4000-8000-000000000222";
+    await activateLocalUser(delegateId);
+    const db = await localDb();
+    const pending = operation("00000000-0000-4000-8000-000000000223", 1, { note: "Queued delegate edit" });
+    const shared = {
+      ...optimisticTask(undefined, { ...pending, command: "create", baseRevision: 0, changedFields: { text: "Shared" } }),
+      userId: ownerId,
+      ownerId,
+      delegateId,
+      revision: 1
+    };
+    await db.put("tasks", shared);
+    await db.put("operations", pending);
+    await setCursor(10);
+    tasks.value = [shared];
+    pendingCount.value = 1;
+
+    await applyEvent({
+      cursor: 5,
+      task: { ...shared, delegateId: null, revision: 2 },
+      conflict: null,
+      operationId: "00000000-0000-4000-8000-000000000224"
+    }, delegateId);
+
+    expect(await db.get("tasks", shared.id)).toBeUndefined();
+    expect(await db.count("operations")).toBe(0);
+    expect(tasks.value).toEqual([]);
+    expect(pendingCount.value).toBe(0);
+    expect(await cursor()).toBe(10);
+  });
+
+  it("treats an authoritative reconnect snapshot as revocation without discarding offline creates", async () => {
+    const ownerId = "00000000-0000-4000-8000-000000000225";
+    const delegateId = "00000000-0000-4000-8000-000000000226";
+    await activateLocalUser(delegateId);
+    const db = await localDb();
+    const edit = operation("00000000-0000-4000-8000-000000000227", 1, { note: "Offline delegate edit" });
+    const shared = {
+      ...optimisticTask(undefined, { ...edit, command: "create", baseRevision: 0, changedFields: { text: "Shared offline" } }),
+      userId: ownerId,
+      ownerId,
+      delegateId,
+      revision: 1
+    };
+    const create = {
+      ...operation("00000000-0000-4000-8000-000000000228", 0, { text: "My offline create" }, "create"),
+      taskId: "00000000-0000-4000-8000-000000000229"
+    };
+    const created = optimisticTask(undefined, create);
+    await Promise.all([
+      db.put("tasks", shared),
+      db.put("tasks", created),
+      db.put("operations", edit),
+      db.put("operations", create)
+    ]);
+    tasks.value = [shared, created];
+    pendingCount.value = 2;
+
+    await applySnapshot({ tasks: [], events: [], cursor: 0 });
+
+    expect(await db.get("tasks", shared.id)).toBeUndefined();
+    expect(await db.get("operations", edit.operationId)).toBeUndefined();
+    expect(await db.get("tasks", created.id)).toBeDefined();
+    expect(await db.get("operations", create.operationId)).toBeDefined();
+    expect(tasks.value.map((task) => task.id)).toEqual([created.id]);
+    expect(pendingCount.value).toBe(1);
   });
 
   it("keeps transport and server outages retryable but surfaces deterministic rejection", async () => {

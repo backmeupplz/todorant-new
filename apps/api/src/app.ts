@@ -323,9 +323,11 @@ export async function buildApp(options: AppOptions) {
     }
   });
 
-  app.get("/api/tasks/:taskId/history", { preHandler: [requireAuth] }, async (request) => {
+  app.get("/api/tasks/:taskId/history", { preHandler: [requireAuth] }, async (request, reply) => {
     const { taskId } = request.params as { taskId: string };
-    return { events: await options.store.history(currentSession(request).user.id, taskId) };
+    const events = await options.store.history(currentSession(request).user.id, taskId);
+    if (!events.length) return reply.code(404).send({ error: "Task history is not available" });
+    return { events };
   });
 
   app.get("/api/report", { preHandler: [requireAuth] }, async (request) =>
