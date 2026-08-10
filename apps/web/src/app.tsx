@@ -128,6 +128,11 @@ export const canReorderPlanningTasks = (source: Task, target: Task): boolean =>
 export const planningReorderHelp =
   "Tasks can only be dragged within the same date or month group";
 
+export const applyDisclosureAction = (action: () => void, target: EventTarget | null): void => {
+  action();
+  (target as HTMLElement | null)?.closest("details")?.removeAttribute("open");
+};
+
 export function scheduleForNewTask(
   productDay: string,
   selectedDate: string | null,
@@ -313,7 +318,7 @@ export function TaskRow({
           aria-pressed={task.completedAt !== null}
           onClick={() => void complete()}
         >
-          {task.completedAt ? "✓" : ""}
+          <span class="check-visual" aria-hidden="true">{task.completedAt ? "✓" : ""}</span>
         </button>
         <button
           class="task-title"
@@ -564,8 +569,7 @@ export function Workspace({ session, logout, initialView = "current" }: { sessio
     window.setTimeout(() => quickAddInput.current?.focus(), 0);
   };
   const chooseView = (view: TaskView, event?: Event) => {
-    setFilter(view);
-    (event?.currentTarget as HTMLElement | undefined)?.closest("details")?.removeAttribute("open");
+    applyDisclosureAction(() => setFilter(view), event?.currentTarget ?? null);
   };
   const refreshInvitations = async () => {
     const result = await api.request<{ invitations: DelegationInvite[] }>("/api/delegations/invitations").catch(() => null);
@@ -736,7 +740,7 @@ export function Workspace({ session, logout, initialView = "current" }: { sessio
         <div class="list-header"><div><span class="eyebrow">{filter === "current" ? "One thing at a time" : filter === "planning" || filter === "today" ? "Trust the system" : "Todorant"}</span><h1>{filter === "reports" ? "Report" : filter === "today" ? "Planning · Today" : `${filter[0]?.toUpperCase()}${filter.slice(1)}`}</h1></div><div class="header-actions"><span class="count">{list.length}</span>{!(["reports", "trash"] as TaskView[]).includes(filter) && <button class="add-context" aria-keyshortcuts="A" onClick={openGlobalAdd}>＋ Add task</button>}</div></div>
         {filter === "current" && <section class="day-progress" aria-label={`${completedToday} of ${todayTasks.length} tasks completed today`}><span>{completedToday} / {todayTasks.length} today</span><progress max={Math.max(todayTasks.length, 1)} value={completedToday} /></section>}
         {filter === "current" && planningRequired && <aside class="planning-lock"><strong>Planning comes first.</strong><span>Redistribute overdue work before returning to Current.</span><button class="primary" onClick={() => setFilter("planning")}>Open Planning</button></aside>}
-        {(filter === "planning" || filter === "today") && <div class="planning-tools" role="toolbar" aria-label="Planning controls"><button class={searchOpen || search ? "active" : ""} aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); if (!searchOpen) window.setTimeout(() => searchInput.current?.focus(), 0); }}>⌕ <span>Search</span></button>{searchOpen && <div class="planning-search"><input ref={searchInput} type="search" value={search} placeholder="Search tasks, notes, and tags" aria-label="Search tasks" onInput={(event) => setSearch(event.currentTarget.value)} /><button class="icon-button" aria-label="Close search" onClick={() => { setSearchOpen(false); setSearch(""); }}>×</button></div>}<details class="view-menu"><summary>View{planningActiveStates.length > 0 && <span class="filter-count" aria-label={`${planningActiveStates.length} active view filters`}>{planningActiveStates.length}</span>}</summary><div class="view-popover"><button aria-pressed={filter === "today"} onClick={() => setFilter(filter === "today" ? "planning" : "today")}>{filter === "today" ? "Show all dates" : "Today only"}</button><label class="month-control">Calendar month<input type="month" value={planningMonth} onInput={(event) => { setPlanningMonth(event.currentTarget.value); setFilter("planning"); }} /></label><button aria-pressed={showCompleted} onClick={() => setShowCompleted(!showCompleted)}>{showCompleted ? "Hide completed" : "Include completed"}</button><button aria-pressed={reorderEnabled} title={planningReorderHelp} onClick={() => { setFilter("planning"); setReorderEnabled(!reorderEnabled); }}>{reorderEnabled ? "Finish ordering" : "Reorder tasks"}</button></div></details>{planningActiveStates.map((state) => <span class="active-filter-badge" key={state}>{state}</span>)}</div>}
+        {(filter === "planning" || filter === "today") && <div class="planning-tools" role="toolbar" aria-label="Planning controls"><button class={searchOpen || search ? "active" : ""} aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); if (!searchOpen) window.setTimeout(() => searchInput.current?.focus(), 0); }}>⌕ <span>Search</span></button>{searchOpen && <div class="planning-search"><input ref={searchInput} type="search" value={search} placeholder="Search tasks, notes, and tags" aria-label="Search tasks" onInput={(event) => setSearch(event.currentTarget.value)} /><button class="icon-button" aria-label="Close search" onClick={() => { setSearchOpen(false); setSearch(""); }}>×</button></div>}<details class="view-menu"><summary>View{planningActiveStates.length > 0 && <span class="filter-count" aria-label={`${planningActiveStates.length} active view filters`}>{planningActiveStates.length}</span>}</summary><div class="view-popover"><button aria-pressed={filter === "today"} onClick={(event) => applyDisclosureAction(() => setFilter(filter === "today" ? "planning" : "today"), event.currentTarget)}>{filter === "today" ? "Show all dates" : "Today only"}</button><label class="month-control">Calendar month<input type="month" value={planningMonth} onInput={(event) => applyDisclosureAction(() => { setPlanningMonth(event.currentTarget.value); setFilter("planning"); }, event.currentTarget)} /></label><button aria-pressed={showCompleted} onClick={(event) => applyDisclosureAction(() => setShowCompleted(!showCompleted), event.currentTarget)}>{showCompleted ? "Hide completed" : "Include completed"}</button><button aria-pressed={reorderEnabled} title={planningReorderHelp} onClick={(event) => applyDisclosureAction(() => { setFilter("planning"); setReorderEnabled(!reorderEnabled); }, event.currentTarget)}>{reorderEnabled ? "Finish ordering" : "Reorder tasks"}</button></div></details>{planningActiveStates.map((state) => <span class="active-filter-badge" key={state}>{state}</span>)}</div>}
         {reorderEnabled && filter === "planning" && <p class="meta">Drag tasks within the same date or month group. Change a task’s schedule to move it between groups.</p>}
         {!(["current", "reports", "planning", "today"] as TaskView[]).includes(filter) && <input class="search" type="search" value={search} placeholder="Search tasks, notes, and tags" aria-label="Search tasks" onInput={(event) => setSearch(event.currentTarget.value)} />}
         {addOpen && (
@@ -767,7 +771,7 @@ export function Workspace({ session, logout, initialView = "current" }: { sessio
         )}
         {filter === "reports" ? <ReportPanel all={orderedTasks.value} /> : filter === "planning" && list.length ? (
           <div class="planning-groups">
-            {planningGroups.map(([group, groupTasks]) => <section class="planning-group" key={group}><header><div><span>{group.length === 7 ? "Month" : group < date ? "Overdue" : group === date ? "Today" : "Scheduled"}</span><h2>{group}</h2></div><button class="group-add" aria-label={`Add task for ${group}`} onClick={() => { setAddDate(group.length === 10 ? group : ""); setAddMonth(group.slice(0, 7)); setAddOpen(true); window.setTimeout(() => quickAddInput.current?.focus(), 0); }}>＋ <span>Add here</span></button></header><ul class="task-list">{groupTasks.map((task, index) => <TaskRow key={task.id} task={task} index={index} all={groupTasks} current={false} expanded={expanded === task.id} onExpand={() => setExpanded(expanded === task.id ? null : task.id)} settings={settings} currentUserId={session.user.id} reorderEnabled={reorderEnabled} onDragStart={() => setDraggingId(task.id)} onDrop={() => dropTaskBefore(task.id)} />)}</ul></section>)}
+            {planningGroups.map(([group, groupTasks]) => <section class="planning-group" key={group}><header><div><span>{group.length === 7 ? "Month" : group < date ? "Overdue" : group === date ? "Today" : "Scheduled"}</span><h2>{group}</h2></div><button class="group-add" aria-label={`Add task for ${group}`} onClick={() => { setAddDate(group.length === 10 ? group : ""); setAddMonth(group.slice(0, 7)); setAddOpen(true); window.setTimeout(() => quickAddInput.current?.focus(), 0); }}>＋</button></header><ul class="task-list">{groupTasks.map((task, index) => <TaskRow key={task.id} task={task} index={index} all={groupTasks} current={false} expanded={expanded === task.id} onExpand={() => setExpanded(expanded === task.id ? null : task.id)} settings={settings} currentUserId={session.user.id} reorderEnabled={reorderEnabled} onDragStart={() => setDraggingId(task.id)} onDrop={() => dropTaskBefore(task.id)} />)}</ul></section>)}
           </div>
         ) : list.length ? (
           <ul class="task-list">

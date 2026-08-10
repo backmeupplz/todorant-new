@@ -1,7 +1,7 @@
 import render from "preact-render-to-string";
 import { describe, expect, it } from "vitest";
 import { canonicalRules, rankBetween, type Task } from "@todorant/domain";
-import { canReorderPlanningTasks, isActionableOn, Landing, planningReorderHelp, productDate, requiresPlanningOn, scheduleForNewTask, TaskRow, Workspace } from "./app.js";
+import { applyDisclosureAction, canReorderPlanningTasks, isActionableOn, Landing, planningReorderHelp, productDate, requiresPlanningOn, scheduleForNewTask, TaskRow, Workspace } from "./app.js";
 import { tasks } from "./sync.js";
 
 describe("public landing", () => {
@@ -98,6 +98,8 @@ describe("authenticated parity surface", () => {
       <TaskRow task={value} index={0} all={[value]} current={false} expanded={false} onExpand={() => undefined} settings={{}} currentUserId={value.userId} />
     );
     expect(compactRow).toContain('class="task-title"');
+    expect(compactRow).toContain('class="check-visual"');
+    expect(compactRow).toContain('aria-label="Complete Plan launch"');
     expect(compactRow).not.toContain('class="task-editor"');
   });
 
@@ -118,7 +120,22 @@ describe("authenticated parity surface", () => {
     expect(planning).toContain("Calendar month");
     expect(planning).toContain("Include completed");
     expect(planning).toContain("Reorder tasks");
-    expect(planning).toContain("Add here");
+    expect(planning).toContain('class="group-add"');
+    expect(planning).toContain('aria-label="Add task for 2026-01-01"');
+    expect(planning).not.toContain("Add here");
+  });
+
+  it("applies View options and closes their disclosure", () => {
+    let applied = false;
+    const removed: string[] = [];
+    const target = {
+      closest: (selector: string) => selector === "details" ? { removeAttribute: (attribute: string) => removed.push(attribute) } : null
+    } as unknown as EventTarget;
+
+    applyDisclosureAction(() => { applied = true; }, target);
+
+    expect(applied).toBe(true);
+    expect(removed).toEqual(["open"]);
   });
 
   it("excludes a skipped occurrence and future month-only work from Current and Today", () => {
