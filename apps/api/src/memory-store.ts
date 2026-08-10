@@ -1,4 +1,4 @@
-import { compareRanks, type CommandResult, type DelegationInvite, type SyncEvent, type Task, type TaskOperation } from "@todorant/domain";
+import { compareRanks, stripRemovedEpicData, type CommandResult, type DelegationInvite, type SyncEvent, type Task, type TaskOperation } from "@todorant/domain";
 import { applyOperation, changedFieldsFor } from "./sync.js";
 import type {
   DataStore,
@@ -47,7 +47,7 @@ export class MemoryDataStore implements DataStore {
     const session = this.sessions.get(tokenHash);
     if (!session || session.expiresAt <= new Date()) return null;
     const user = this.users.get(session.userId);
-    return user ? { ...session, user } : null;
+    return user ? stripRemovedEpicData({ ...session, user }) : null;
   }
 
   async deleteSession(tokenHash: string): Promise<void> {
@@ -62,7 +62,7 @@ export class MemoryDataStore implements DataStore {
     const events = this.events.filter(
       (event) => event.cursor > afterCursor && accessibleTasks.has(`${event.task.userId}:${event.task.id}`)
     );
-    return { tasks, events, cursor: this.events.at(-1)?.cursor ?? 0 };
+    return stripRemovedEpicData({ tasks, events, cursor: this.events.at(-1)?.cursor ?? 0 });
   }
 
   async applyCommand(userId: string, operation: TaskOperation): Promise<CommandResult> {
@@ -77,7 +77,7 @@ export class MemoryDataStore implements DataStore {
     const taskKey = `${current?.userId ?? userId}:${operation.taskId}`;
     if (duplicate) {
       if (!authorized || duplicate.task.id !== operation.taskId) throw new Error("Task not found");
-      return { ...duplicate, duplicate: true };
+      return stripRemovedEpicData({ ...duplicate, duplicate: true });
     }
     if (candidate && !current) throw new Error("Task not found");
     if (current && operation.baseRevision > current.revision) {
@@ -144,7 +144,7 @@ export class MemoryDataStore implements DataStore {
     if (previousDelegateId && previousDelegateId !== task.delegateId && previousDelegateId !== task.userId) {
       this.publish(previousDelegateId, event);
     }
-    return result;
+    return stripRemovedEpicData(result);
   }
 
   async delegationInvites(userId: string): Promise<DelegationInvite[]> {
@@ -163,9 +163,9 @@ export class MemoryDataStore implements DataStore {
       (task) => task.id === taskId && (task.userId === userId || task.delegateId === userId)
     );
     if (!current) return [];
-    return this.events.filter(
+    return stripRemovedEpicData(this.events.filter(
       (event) => event.task.id === taskId && event.task.userId === current.userId
-    );
+    ));
   }
 
   async createReport(userId: string, data: ReportData): Promise<string> {
@@ -179,13 +179,13 @@ export class MemoryDataStore implements DataStore {
   }
 
   async getSettings(userId: string): Promise<Record<string, unknown>> {
-    return this.users.get(userId)?.settings ?? {};
+    return stripRemovedEpicData(this.users.get(userId)?.settings ?? {});
   }
 
   async setSettings(userId: string, settings: Record<string, unknown>) {
     const user = this.users.get(userId);
     if (!user) throw new Error("User not found");
-    user.settings = { ...user.settings, ...settings };
+    user.settings = stripRemovedEpicData({ ...user.settings, ...settings });
     return user.settings;
   }
 
@@ -221,7 +221,7 @@ export class MemoryDataStore implements DataStore {
   }
 
   async exportData(userId: string): Promise<Record<string, unknown>> {
-    return {
+    return stripRemovedEpicData({
       version: 1,
       exportedAt: new Date().toISOString(),
       tasks: [...this.tasks.values()].filter((task) => task.userId === userId),
@@ -233,6 +233,6 @@ export class MemoryDataStore implements DataStore {
       reports: [...this.reports.entries()]
         .filter(([, report]) => report.userId === userId)
         .map(([id, report]) => ({ id, data: report.data }))
-    };
+    });
   }
 }

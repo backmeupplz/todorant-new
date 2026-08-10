@@ -37,6 +37,39 @@ afterEach(async () => {
 });
 
 describe("per-user IndexedDB replica", () => {
+  it("upgrades legacy local replicas without retaining epic state or epic-only edits", async () => {
+    const userId = "00000000-0000-4000-8000-000000000210";
+    const legacy = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(`todorant-vnext-${userId}`, 1);
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        database.createObjectStore("tasks", { keyPath: "id" });
+        const operations = database.createObjectStore("operations", { keyPath: "operationId" });
+        operations.createIndex("queuedAt", "queuedAt");
+        database.createObjectStore("conflicts", { keyPath: "id" });
+        database.createObjectStore("meta");
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const retired = operation("00000000-0000-4000-8000-000000000209", 1, {}, "update");
+    const created = optimisticTask(undefined, operation("00000000-0000-4000-8000-000000000208", 0, { text: "Keep task #launch" }, "create"));
+    const write = legacy.transaction(["tasks", "operations"], "readwrite");
+    write.objectStore("tasks").put({ ...created, epicId: "launch" });
+    write.objectStore("operations").put({ ...retired, changedFields: { epicId: "launch" } });
+    await new Promise<void>((resolve, reject) => {
+      write.oncomplete = () => resolve();
+      write.onerror = () => reject(write.error);
+    });
+    legacy.close();
+
+    await activateLocalUser(userId);
+    const upgraded = await localDb();
+    expect(await upgraded.get("tasks", created.id)).toMatchObject({ text: "Keep task #launch", tags: [] });
+    expect(await upgraded.get("tasks", created.id)).not.toHaveProperty("epicId");
+    expect(await upgraded.count("operations")).toBe(0);
+  });
+
   it("preserves an offline outbox across logout without exposing it to another account", async () => {
     await activateLocalUser("00000000-0000-4000-8000-000000000211");
     const db = await localDb();
@@ -91,7 +124,7 @@ describe("per-user IndexedDB replica", () => {
 
     await Promise.all([
       queueCommand(created.id, "update", { note: "Retained note" }),
-      queueCommand(created.id, "update", { epicId: "Retained epic" }),
+      queueCommand(created.id, "update", { frog: true }),
       queueCommand(created.id, "update", {
         schedule: { ...created.schedule, time: "09:45" }
       })
@@ -104,10 +137,10 @@ describe("per-user IndexedDB replica", () => {
     expect(persisted).toMatchObject({
       revision: 4,
       note: "Retained note",
-      epicId: "Retained epic",
+      frog: true,
       schedule: { time: "09:45" }
     });
-    expect(tasks.value[0]).toMatchObject({ revision: 4, note: "Retained note", epicId: "Retained epic" });
+    expect(tasks.value[0]).toMatchObject({ revision: 4, note: "Retained note", frog: true });
   });
 
   it("removes access when an owner revokes delegation", () => {

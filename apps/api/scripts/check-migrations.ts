@@ -7,8 +7,8 @@ if (files.length === 0) throw new Error("No SQL migrations found");
 
 for (const file of files) {
   const sql = await readFile(resolve(directory, file), "utf8");
-  if (!/\b(CREATE|ALTER)\s+(TABLE|INDEX)\b/iu.test(sql) || /DROP\s+(TABLE|DATABASE)/iu.test(sql)) {
-    throw new Error(`${file} has no schema changes or contains a destructive statement`);
+  if (!/\b(?:CREATE|ALTER|INSERT|UPDATE|DELETE)\b/iu.test(sql) || /DROP\s+(TABLE|DATABASE)/iu.test(sql)) {
+    throw new Error(`${file} has no schema/data changes or contains a destructive schema statement`);
   }
 }
 

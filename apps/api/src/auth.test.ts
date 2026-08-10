@@ -177,6 +177,26 @@ describe("email and password authentication", () => {
       headers,
       payload: { theme: "dark", unexpected: "value" }
     })).statusCode).toBe(400);
+    expect((await app.inject({
+      method: "PATCH",
+      url: "/api/settings",
+      headers,
+      payload: { epicGoals: { launch: 4 } }
+    })).statusCode).toBe(400);
+    expect((await app.inject({
+      method: "POST",
+      url: "/api/commands",
+      headers,
+      payload: {
+        operationId: "00000000-0000-4000-8000-000000000043",
+        taskId: "00000000-0000-4000-8000-000000000044",
+        deviceId: "retired-client",
+        baseRevision: 0,
+        command: "create",
+        changedFields: { text: "Must be rejected", epicId: "launch" },
+        clientTime: new Date().toISOString()
+      }
+    })).statusCode).toBe(400);
 
     vi.spyOn(store, "applyCommand").mockRejectedValueOnce(new Error("password authentication failed for postgres"));
     const command = await app.inject({

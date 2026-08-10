@@ -174,9 +174,9 @@ describe("two-client web synchronization", () => {
     await vi.waitFor(() => expect(tasks.value[0]?.note).toBe("Arrived over WebSocket"), { timeout: 2_000 });
 
     network.onLine = false;
-    await queueCommand(taskId, "update", { epicId: "Offline delegate edit" });
+    await queueCommand(taskId, "update", { frog: true });
     expect(pendingCount.value).toBe(1);
-    expect((await localDb()).get("tasks", taskId)).resolves.toMatchObject({ epicId: "Offline delegate edit" });
+    expect((await localDb()).get("tasks", taskId)).resolves.toMatchObject({ frog: true });
     await stopSync();
 
     network.onLine = true;

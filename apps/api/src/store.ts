@@ -26,7 +26,7 @@ export type ImportRun = {
 };
 
 export type LegacyRecord = {
-  kind: "users" | "settings" | "tasks" | "tags" | "epics" | "delegation" | "history";
+  kind: "users" | "settings" | "tasks" | "tags" | "delegation" | "history";
   legacyId: string;
   checksum: string;
   importedId: string;

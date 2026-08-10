@@ -51,8 +51,10 @@ class LegacyFixture implements LegacyReader {
           encrypted: false
         }
       ],
-      tags: [{ _id: "tag", tag: "work", epic: false }],
-      epics: [{ _id: "epic", tag: "launch", epic: true, epicGoal: 4 }],
+      tags: [
+        { _id: "tag", tag: "work" },
+        { _id: "epic", tag: "launch" }
+      ],
       delegation: [{ _id: "legacy-user:delegation", delegates: ["friend"] }],
       history: [{ _id: "report", uuid: "safe-report", meta: { completedTodosMap: { "2026-08-01": 1 } } }]
     };
@@ -74,7 +76,7 @@ describe("legacy migration", () => {
     const retryResult = await migration.run(retry, legacyUserId);
 
     expect(firstResult.status).toBe("complete");
-    expect(firstResult.counts).toMatchObject({ tasks: 2, tags: 1, epics: 1, delegation: 1, history: 1 });
+    expect(firstResult.counts).toMatchObject({ tasks: 2, tags: 2, delegation: 1, history: 1 });
     expect(retryResult.status).toBe("complete");
     expect(Object.values(retryResult.counts).every((count) => count === 0)).toBe(true);
     expect(reader.calls).toEqual([
@@ -99,7 +101,7 @@ describe("legacy migration", () => {
       schedule: { month: "2026-08", date: "2026-08-01", time: "09:30" }
     });
     expect(acceptedTask?.completedAt).not.toBeNull();
-    expect(acceptedTask?.epicId).toBeTruthy();
+    expect(acceptedTask).not.toHaveProperty("epicId");
     const pendingTask = [...store.tasks.values()].find((item) => item.text === "Pending owner-side delegation");
     expect(pendingTask).toMatchObject({
       userId: user.id,
@@ -115,5 +117,10 @@ describe("legacy migration", () => {
     expect(await store.getSettings(user.id)).toMatchObject({ firstDayOfWeek: 1, newTodosGoFirst: true });
     expect([...store.legacy.values()].some((record) => "token" in record.payload)).toBe(false);
     expect([...store.legacy.values()].some((record) => "googleCalendarCredentials" in record.payload)).toBe(false);
+    expect([...store.legacy.values()].find((record) => record.payload.tag === "launch")).toMatchObject({
+      kind: "tags",
+      payload: { tag: "launch" }
+    });
+    expect([...store.legacy.values()].some((record) => Object.keys(record.payload).some((key) => key.toLocaleLowerCase().startsWith("epic")))).toBe(false);
   });
 });

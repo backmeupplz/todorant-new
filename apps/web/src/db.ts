@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
-import type { Conflict, Task, TaskOperation } from "@todorant/domain";
+import { stripRemovedEpicData, type Conflict, type Task, type TaskOperation } from "@todorant/domain";
 
 type PendingOperation = TaskOperation & {
   queuedAt: string;
@@ -20,13 +20,35 @@ let identityDatabase: Promise<IDBPDatabase<{ meta: { key: string; value: string 
 
 export const localDb = () => {
   if (!activeUser) throw new Error("A local user must be active");
-  database ??= openDB<TodorantDatabase>(`todorant-vnext-${activeUser}`, 1, {
-    upgrade(db) {
-      db.createObjectStore("tasks", { keyPath: "id" });
-      const operations = db.createObjectStore("operations", { keyPath: "operationId" });
-      operations.createIndex("queuedAt", "queuedAt");
-      db.createObjectStore("conflicts", { keyPath: "id" });
-      db.createObjectStore("meta");
+  database ??= openDB<TodorantDatabase>(`todorant-vnext-${activeUser}`, 2, {
+    async upgrade(db, oldVersion, _newVersion, transaction) {
+      if (oldVersion === 0) {
+        db.createObjectStore("tasks", { keyPath: "id" });
+        const operations = db.createObjectStore("operations", { keyPath: "operationId" });
+        operations.createIndex("queuedAt", "queuedAt");
+        db.createObjectStore("conflicts", { keyPath: "id" });
+        db.createObjectStore("meta");
+      }
+      if (oldVersion >= 1 && oldVersion < 2) {
+        for (const name of ["tasks", "conflicts"] as const) {
+          let cursor = await transaction.objectStore(name).openCursor();
+          while (cursor) {
+            await cursor.update(stripRemovedEpicData(cursor.value));
+            cursor = await cursor.continue();
+          }
+        }
+        const operations = transaction.objectStore("operations");
+        let operationCursor = await operations.openCursor();
+        while (operationCursor) {
+          const fields = operationCursor.value.changedFields as Record<string, unknown>;
+          if (Object.keys(fields).length > 0 && Object.keys(fields).every((key) => key === "epicId")) {
+            await operationCursor.delete();
+          } else {
+            await operationCursor.update(stripRemovedEpicData(operationCursor.value));
+          }
+          operationCursor = await operationCursor.continue();
+        }
+      }
     }
   });
   return database;

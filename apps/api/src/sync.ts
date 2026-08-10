@@ -2,6 +2,7 @@ import {
   canApplyToTombstone,
   normalizeTags,
   rankBetween,
+  stripRemovedEpicData,
   touchedFields,
   type Conflict,
   type MutableTaskField,
@@ -31,7 +32,6 @@ const defaults = (context: ApplyContext): Task => ({
   frogFails: 0,
   skippedDates: [],
   tags: [],
-  epicId: null,
   frog: false,
   rank: rankBetween(context.beforeRank, context.afterRank),
   ownerId: context.userId,
@@ -61,7 +61,7 @@ export function applyOperation(context: ApplyContext): { task: Task; conflict: C
     throw new Error("Task already exists");
   }
 
-  const original = context.current ?? defaults(context);
+  const original = stripRemovedEpicData(context.current ?? defaults(context));
   const operationFields = touchedFields(operation);
   // Tag commands carry their intent as add/remove sets. Applying that delta to
   // the canonical set is commutative for independent changes, so a stale tag

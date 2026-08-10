@@ -100,8 +100,7 @@ const parseSettings = (body: unknown): Record<string, unknown> | null => {
     "showMoreByDefault",
     "duplicateTagInBreakdown",
     "firstDayOfWeek",
-    "startTimeOfDay",
-    "epicGoals"
+    "startTimeOfDay"
   ]);
   if (Object.keys(input).length === 0 || Object.keys(input).some((key) => !allowed.has(key))) return null;
   const settings: Record<string, unknown> = {};
@@ -128,17 +127,6 @@ const parseSettings = (body: unknown): Record<string, unknown> | null => {
   if (input.startTimeOfDay !== undefined) {
     if (typeof input.startTimeOfDay !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/u.test(input.startTimeOfDay)) return null;
     settings.startTimeOfDay = input.startTimeOfDay;
-  }
-  if (input.epicGoals !== undefined) {
-    if (!input.epicGoals || typeof input.epicGoals !== "object" || Array.isArray(input.epicGoals)) return null;
-    const goals = input.epicGoals as Record<string, unknown>;
-    if (
-      Object.keys(goals).length > 100 ||
-      Object.entries(goals).some(([key, value]) =>
-        key.length < 1 || key.length > 100 || typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > 1_000_000
-      )
-    ) return null;
-    settings.epicGoals = goals;
   }
   return settings;
 };
@@ -171,7 +159,7 @@ const parseOperation = (body: unknown): TaskOperation | null => {
   ) return null;
 
   const source = value.changedFields as Record<string, unknown>;
-  const allowedFields = new Set(["text", "note", "frog", "epicId", "schedule", "repetitive", "encryption", "parentId"]);
+  const allowedFields = new Set(["text", "note", "frog", "schedule", "repetitive", "encryption", "parentId"]);
   if (Object.keys(source).some((key) => !allowedFields.has(key))) return null;
   const changedFields: TaskOperation["changedFields"] = {};
   if (source.text !== undefined) {
@@ -189,12 +177,6 @@ const parseOperation = (body: unknown): TaskOperation | null => {
   if (source.repetitive !== undefined) {
     if (typeof source.repetitive !== "boolean") return null;
     changedFields.repetitive = source.repetitive;
-  }
-  for (const key of ["epicId"] as const) {
-    if (source[key] !== undefined) {
-      if (source[key] !== null && (typeof source[key] !== "string" || String(source[key]).length > 128)) return null;
-      changedFields[key] = source[key] as string | null;
-    }
   }
   if (source.schedule !== undefined) {
     if (!source.schedule || typeof source.schedule !== "object") return null;
