@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+
+minimumReleaseAge: 1440
+
+allowBuilds:
+  argon2: true
+  esbuild: true
