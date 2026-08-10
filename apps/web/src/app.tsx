@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import type { JSX } from "preact";
 import { canonicalRules, compareRanks, type CommandResult, type Conflict, type DelegationInvite, type SyncEvent, type Task } from "@todorant/domain";
 import {
   api,
@@ -27,6 +28,25 @@ type Session = {
 type ProductSettings = Record<string, unknown>;
 
 const enabled = (settings: ProductSettings, key: string): boolean => settings[key] === true;
+
+type IconName = "calendar" | "check" | "close" | "focus" | "lock" | "more" | "plus" | "repeat" | "search" | "skip" | "view";
+
+export function Icon({ name }: { name: IconName }) {
+  const paths: Record<IconName, JSX.Element> = {
+    calendar: <><rect x="3" y="4.5" width="14" height="13" rx="2" /><path d="M6.5 2.5v4M13.5 2.5v4M3 8.5h14" /></>,
+    check: <path d="m5 10.5 3.2 3L15 6.5" />,
+    close: <path d="m5 5 10 10M15 5 5 15" />,
+    focus: <><circle cx="10" cy="10" r="6.5" /><circle cx="10" cy="10" r="2" /></>,
+    lock: <><rect x="4" y="8.5" width="12" height="9" rx="2" /><path d="M6.5 8.5V6a3.5 3.5 0 0 1 7 0v2.5" /></>,
+    more: <><circle cx="4" cy="10" r="1" fill="currentColor" stroke="none" /><circle cx="10" cy="10" r="1" fill="currentColor" stroke="none" /><circle cx="16" cy="10" r="1" fill="currentColor" stroke="none" /></>,
+    plus: <path d="M10 4v12M4 10h12" />,
+    repeat: <><path d="M15.5 7A6 6 0 0 0 5 5.5L3 7.5" /><path d="M3 4.5v3h3M4.5 13A6 6 0 0 0 15 14.5l2-2" /><path d="M17 15.5v-3h-3" /></>,
+    search: <><circle cx="8.5" cy="8.5" r="5" /><path d="m12.2 12.2 4.3 4.3" /></>,
+    skip: <><path d="m5 5 7 5-7 5V5Z" /><path d="M15 5v10" /></>,
+    view: <><path d="M3 5.5h14M3 10h14M3 14.5h14" /><circle cx="7" cy="5.5" r="1.5" fill="var(--surface)" /><circle cx="13" cy="10" r="1.5" fill="var(--surface)" /><circle cx="8.5" cy="14.5" r="1.5" fill="var(--surface)" /></>
+  };
+  return <svg class="icon" aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">{paths[name]}</svg>;
+}
 
 type ImportRun = {
   id: string;
@@ -162,6 +182,7 @@ export function TaskRow({
   onExpand,
   settings,
   currentUserId,
+  hideSchedule = false,
   reorderEnabled = false,
   onDragStart,
   onDrop
@@ -174,6 +195,7 @@ export function TaskRow({
   onExpand: () => void;
   settings: ProductSettings;
   currentUserId: string;
+  hideSchedule?: boolean;
   reorderEnabled?: boolean;
   onDragStart?: () => void;
   onDrop?: () => void;
@@ -318,7 +340,7 @@ export function TaskRow({
           aria-pressed={task.completedAt !== null}
           onClick={() => void complete()}
         >
-          <span class="check-visual" aria-hidden="true">{task.completedAt ? "✓" : ""}</span>
+          <span class="check-visual" aria-hidden="true">{task.completedAt ? <Icon name="check" /> : null}</span>
         </button>
         <button
           class="task-title"
@@ -328,60 +350,63 @@ export function TaskRow({
         >{text}</button>
         {task.frog && <span class="badge" title="Frog task">frog</span>}
         {current && !task.frog && <span class="badge" title="Current focus">current</span>}
-        {task.repetitive && <span class="indicator" title="Conscious repetitive task">↻</span>}
-        {task.skippedDates.length > 0 && <span class="indicator" title={`Skipped ${task.skippedDates.length} times`}>↷</span>}
-        {task.encryption && <span class="indicator" title="Encrypted task">◆</span>}
+        {task.repetitive && <span class="indicator" title="Conscious repetitive task"><Icon name="repeat" /><span class="sr-only">Conscious repetitive task</span></span>}
+        {task.skippedDates.length > 0 && <span class="indicator" title={`Skipped ${task.skippedDates.length} times`}><Icon name="skip" /><span class="sr-only">Skipped {task.skippedDates.length} times</span></span>}
+        {task.encryption && <span class="indicator" title="Encrypted task"><Icon name="lock" /><span class="sr-only">Encrypted task</span></span>}
         {task.frogFails > 0 && <span class="frog-marks" aria-label={`${task.frogFails} redistributions`} title={`${task.frogFails} redistributions`}>{"●".repeat(Math.min(task.frogFails, 3))}</span>}
-        {(task.schedule.date || task.schedule.month) && <time class="date" dateTime={task.schedule.date ?? task.schedule.month ?? undefined}>{task.schedule.date ?? task.schedule.month}{task.schedule.time ? ` · ${task.schedule.time}` : ""}</time>}
-        <button class="icon-button" aria-label={`Details for ${task.text}`} aria-expanded={expanded} onClick={onExpand}>•••</button>
+        {!hideSchedule && (task.schedule.date || task.schedule.month) && <time class="date" dateTime={task.schedule.date ?? task.schedule.month ?? undefined}>{task.schedule.date ?? task.schedule.month}{task.schedule.time ? ` · ${task.schedule.time}` : ""}</time>}
+        {hideSchedule && task.schedule.time && <time class="date time-only" dateTime={task.schedule.time}>{task.schedule.time}</time>}
+        <button class="icon-button" aria-label={`Details for ${task.text}`} aria-expanded={expanded} onClick={onExpand}><Icon name="more" /></button>
       </div>
       {expanded && (
         <dialog ref={editor} class="task-editor" aria-labelledby={`task-editor-title-${task.id}`} onClose={onExpand}>
           <div class="editor-shell">
             <header class="editor-header">
-              <div><span class="eyebrow">Task editor</span><h2 id={`task-editor-title-${task.id}`}>Edit task</h2></div>
-              <button class="icon-button" aria-label="Close task editor" onClick={() => editor.current?.close()}>×</button>
+              <div><span class="eyebrow">Task editor</span><h2 id={`task-editor-title-${task.id}`}>Edit task</h2><p class="editor-save-state" role="status">Saved locally · Sync {connection.value}{pendingCount.value ? ` · ${pendingCount.value} queued` : ""}</p></div>
+              <div class="editor-header-actions"><button class="editor-done primary" onClick={() => editor.current?.close()}>Done</button><button class="icon-button" aria-label="Close task editor" onClick={() => editor.current?.close()}><Icon name="close" /></button></div>
             </header>
             <div class="editor-content">
-              <section class="editor-section" aria-labelledby={`basics-${task.id}`}>
-                <h3 id={`basics-${task.id}`}>Basics</h3>
+              <section class="editor-section editor-primary" aria-labelledby={`basics-${task.id}`}>
+                <h3 id={`basics-${task.id}`}>Task</h3>
                 <label>Task title<input autofocus value={text} disabled={task.encryption !== null && !encryptionUnlocked} onInput={(event) => setText(event.currentTarget.value)} onBlur={() => void saveText()} /></label>
+                <div class="editor-schedule-grid"><label>Schedule<input type="date" value={task.schedule.date ?? ""} onInput={(event) => void queueCommand(task.id, "update", { schedule: { ...task.schedule, month: event.currentTarget.value ? event.currentTarget.value.slice(0, 7) : task.schedule.month, date: event.currentTarget.value || null } })} /></label><label>Exact time<input type="time" value={task.schedule.time ?? ""} onInput={(event) => void queueCommand(task.id, "update", { schedule: { ...task.schedule, time: event.currentTarget.value || null } })} /></label></div>
                 <label>Note<textarea value={note} disabled={task.encryption !== null && !encryptionUnlocked} rows={3} onInput={(event) => setNote(event.currentTarget.value)} onBlur={(event) => {
                   if (!task.encryption && event.currentTarget.value !== task.note) void queueCommand(task.id, "update", { note: event.currentTarget.value });
                   if (task.encryption && encryptionPassphrase.value) void encryptTaskFields(text, event.currentTarget.value, encryptionPassphrase.value).then((fields) => queueCommand(task.id, "update", fields));
                 }} /></label>
-                <label>Tags<input defaultValue={task.tags.join(", ")} onBlur={(event) => setTags(event.currentTarget.value)} /></label>
               </section>
-              <section class="editor-section editor-grid" aria-labelledby={`planning-${task.id}`}>
-                <h3 id={`planning-${task.id}`}>Planning</h3>
-                <label>Schedule<input type="date" value={task.schedule.date ?? ""} onInput={(event) => void queueCommand(task.id, "update", { schedule: { ...task.schedule, month: event.currentTarget.value ? event.currentTarget.value.slice(0, 7) : task.schedule.month, date: event.currentTarget.value || null } })} /></label>
+              <details class="editor-disclosure"><summary>Planning &amp; ordering</summary><section class="editor-section editor-grid" aria-labelledby={`planning-${task.id}`}>
+                <h3 class="sr-only" id={`planning-${task.id}`}>Planning and ordering</h3>
                 <label>Planning month<input type="month" value={task.schedule.month ?? ""} onInput={(event) => {
                   const month = event.currentTarget.value || null;
                   const currentDate = productDate(settings.startTimeOfDay);
                   void queueCommand(task.id, "update", { schedule: { ...task.schedule, month, date: month === currentDate.slice(0, 7) ? currentDate : null } });
                 }} /></label>
-                <label>Exact time<input type="time" value={task.schedule.time ?? ""} onInput={(event) => void queueCommand(task.id, "update", { schedule: { ...task.schedule, time: event.currentTarget.value || null } })} /></label>
                 <div class="detail-actions editor-order"><button aria-label="Move task up" disabled={index === 0} onClick={() => move(-1)}>Move up</button><button aria-label="Move task down" disabled={index === all.length - 1} onClick={() => move(1)}>Move down</button></div>
-              </section>
-              <section class="editor-section" aria-labelledby={`behavior-${task.id}`}>
-                <h3 id={`behavior-${task.id}`}>Behavior</h3>
+              </section></details>
+              <details class="editor-disclosure"><summary>Tags &amp; behavior</summary><section class="editor-section" aria-labelledby={`behavior-${task.id}`}>
+                <h3 class="sr-only" id={`behavior-${task.id}`}>Tags and behavior</h3>
+                <label>Tags<input defaultValue={task.tags.join(", ")} onBlur={(event) => setTags(event.currentTarget.value)} /></label>
                 <label class="check-label"><input type="checkbox" checked={task.repetitive} onInput={(event) => void queueCommand(task.id, "update", { repetitive: event.currentTarget.checked })} /> Repetitive (copy or break down consciously)</label>
                 <div class="detail-actions"><button onClick={() => void queueCommand(task.id, "update", { frog: !task.frog })}>{task.frog ? "Unmark frog" : "Mark frog"}</button>{task.repetitive && <button onClick={() => void copyTask()}>Copy occurrence</button>}<button disabled={task.frog} title={task.frog ? "Frogs cannot be skipped" : undefined} onClick={() => void queueCommand(task.id, "skip", {}, { skipDate: productDate(settings.startTimeOfDay) })}>Skip</button></div>
+              </section></details>
+              <details class="editor-disclosure"><summary>Breakdown</summary><section class="editor-section" aria-labelledby={`breakdown-${task.id}`}>
+                <h3 class="sr-only" id={`breakdown-${task.id}`}>Breakdown</h3>
                 <label>Break down into subtasks (one per line)<textarea value={breakdown} rows={3} onInput={(event) => setBreakdown(event.currentTarget.value)} /><button disabled={!breakdown.trim()} onClick={() => void breakDown()}>Create subtasks and complete parent</button></label>
-              </section>
-              <section class="editor-section" aria-labelledby={`collaboration-${task.id}`}>
-                <h3 id={`collaboration-${task.id}`}>Delegation</h3>
+              </section></details>
+              <details class="editor-disclosure"><summary>Delegation</summary><section class="editor-section" aria-labelledby={`collaboration-${task.id}`}>
+                <h3 class="sr-only" id={`collaboration-${task.id}`}>Delegation</h3>
                 {task.userId === currentUserId && task.delegation && ["pending", "accepted"].includes(task.delegation.status) ? <div><p class="meta">Delegation {task.delegation.status}</p><button onClick={() => void revokeDelegation()}>Revoke delegation</button></div> : task.userId === currentUserId ? <label>Delegate to an existing account<span class="inline-fields"><input type="email" value={delegateEmail} placeholder="person@example.com" onInput={(event) => setDelegateEmail(event.currentTarget.value)} /><button disabled={!delegateEmail} onClick={() => void delegate()}>Delegate</button></span></label> : <p class="meta">Delegated to you · accepted</p>}
                 {delegationError && <p class="error" role="alert">{delegationError}</p>}
-              </section>
-              <section class="editor-section" aria-labelledby={`security-${task.id}`}>
-                <h3 id={`security-${task.id}`}>Security & history</h3>
+              </section></details>
+              <details class="editor-disclosure"><summary>Security &amp; history</summary><section class="editor-section" aria-labelledby={`security-${task.id}`}>
+                <h3 class="sr-only" id={`security-${task.id}`}>Security and history</h3>
                 <div class="detail-actions">{!task.encryption && <button disabled={encryptionPassphrase.value.length < 12} title={encryptionPassphrase.value.length < 12 ? "Set an encryption key in Settings first" : undefined} onClick={() => void encryptTaskFields(text, note, encryptionPassphrase.value).then((fields) => queueCommand(task.id, "update", fields))}>Encrypt task</button>}<button class="quiet" onClick={() => void api.request<{ events: SyncEvent[] }>(`/api/tasks/${task.id}/history`).then((value) => setHistory(value.events))}>{history ? "Refresh history" : "Load immutable history"}</button></div>
                 <p class="meta">Revision {task.revision} · Owner {task.ownerId.slice(0, 8)} · {task.encryption ? `Encrypted (${task.encryption.algorithm})` : "Encryption ready"}</p>
                 {task.legacyDelegation && <p class="meta">Imported delegation · legacy delegator {task.legacyDelegation.delegatorId?.slice(0, 8)} · {task.legacyDelegation.accepted === true ? "accepted" : "pending"}</p>}
                 {history && <ol class="history">{history.map((event) => <li key={event.cursor}>Revision {event.task.revision}{event.conflict ? ` · conflict on ${event.conflict.fields.join(", ")}` : ""}</li>)}</ol>}
-              </section>
-              <section class="editor-section danger-zone" aria-labelledby={`danger-${task.id}`}><h3 id={`danger-${task.id}`}>Danger zone</h3><button class="danger" onClick={() => void queueCommand(task.id, "delete")}>Delete task</button></section>
+              </section></details>
+              <details class="editor-disclosure danger-zone"><summary>Danger zone</summary><section class="editor-section" aria-labelledby={`danger-${task.id}`}><h3 class="sr-only" id={`danger-${task.id}`}>Danger zone</h3><button class="danger" onClick={() => void queueCommand(task.id, "delete")}>Delete task</button></section></details>
             </div>
           </div>
         </dialog>
@@ -395,7 +420,7 @@ function RulesPanel({ close }: { close: () => void }) {
   useEffect(() => dialog.current?.showModal(), []);
   return (
     <dialog ref={dialog} class="panel" onClose={close}>
-      <header><div><span class="eyebrow">Main rules</span><h2>How to use Todorant</h2></div><button class="icon-button" aria-label="Close rules" onClick={() => dialog.current?.close()}>×</button></header>
+      <header><div><span class="eyebrow">Main rules</span><h2>How to use Todorant</h2></div><button class="icon-button" aria-label="Close rules" onClick={() => dialog.current?.close()}><Icon name="close" /></button></header>
       <ol class="rules">{canonicalRules.map((rule) => <li key={rule}>{rule}</li>)}</ol>
     </dialog>
   );
@@ -481,7 +506,7 @@ function SettingsPanel({
   };
   return (
     <dialog ref={dialog} class="panel" onClose={close}>
-      <header><div><span class="eyebrow">Account</span><h2>Settings</h2></div><button class="icon-button" aria-label="Close settings" onClick={() => dialog.current?.close()}>×</button></header>
+      <header><div><span class="eyebrow">Account</span><h2>Settings</h2></div><button class="icon-button" aria-label="Close settings" onClick={() => dialog.current?.close()}><Icon name="close" /></button></header>
       <p class="account-email">{session.user.email}</p>
       <label>
         Appearance
@@ -733,14 +758,14 @@ export function Workspace({ session, logout, initialView = "current" }: { sessio
           ))}
         </nav>
         <div class="top-actions">
-          <details class="more-menu"><summary aria-label="More destinations and settings">More</summary><div class="menu-panel"><button onClick={(event) => chooseView("reports", event)}>Report</button><button onClick={(event) => chooseView("delegation", event)}>Delegation</button><button aria-keyshortcuts="?" onClick={(event) => { setRulesOpen(true); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Rules</button><button onClick={(event) => { setSettingsOpen(true); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Settings</button><span class="menu-separator" /><p class={`menu-status ${connection.value}`}><span aria-hidden="true" />Sync {connection.value}{pendingCount.value ? ` · ${pendingCount.value} queued` : ""}</p><button onClick={(event) => chooseView("all", event)}>All tasks</button><button onClick={(event) => chooseView("trash", event)}>Trash</button><button onClick={logout}>Log out</button></div></details>
+          <details class="more-menu"><summary aria-label="More destinations and settings"><Icon name="more" /><span>More</span></summary><div class="menu-panel"><button onClick={(event) => chooseView("reports", event)}>Report</button><button onClick={(event) => chooseView("delegation", event)}>Delegation</button><button aria-keyshortcuts="?" onClick={(event) => { setRulesOpen(true); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Rules</button><button onClick={(event) => { setSettingsOpen(true); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Settings</button><span class="menu-separator" /><p class={`menu-status ${connection.value}`}><span aria-hidden="true" />Sync {connection.value}{pendingCount.value ? ` · ${pendingCount.value} queued` : ""}</p><button onClick={(event) => chooseView("all", event)}>All tasks</button><button onClick={(event) => chooseView("trash", event)}>Trash</button><button onClick={logout}>Log out</button></div></details>
         </div>
       </header>
       <main class="workspace">
-        <div class="list-header"><div><span class="eyebrow">{filter === "current" ? "One thing at a time" : filter === "planning" || filter === "today" ? "Trust the system" : "Todorant"}</span><h1>{filter === "reports" ? "Report" : filter === "today" ? "Planning · Today" : `${filter[0]?.toUpperCase()}${filter.slice(1)}`}</h1></div><div class="header-actions"><span class="count">{list.length}</span>{!(["reports", "trash"] as TaskView[]).includes(filter) && <button class="add-context" aria-keyshortcuts="A" onClick={openGlobalAdd}>＋ Add task</button>}</div></div>
+        <div class="list-header"><div class="list-heading"><span class="eyebrow">{filter === "current" ? "One thing at a time" : filter === "planning" || filter === "today" ? "Trust the system" : "Todorant"}</span><h1>{filter === "reports" ? "Report" : filter === "today" ? "Planning · Today" : `${filter[0]?.toUpperCase()}${filter.slice(1)}`}</h1></div><div class="header-actions">{!(["reports", "trash"] as TaskView[]).includes(filter) && <button class="add-context" aria-keyshortcuts="A" onClick={openGlobalAdd}><Icon name="plus" />Add task</button>}</div></div>
         {filter === "current" && <section class="day-progress" aria-label={`${completedToday} of ${todayTasks.length} tasks completed today`}><span>{completedToday} / {todayTasks.length} today</span><progress max={Math.max(todayTasks.length, 1)} value={completedToday} /></section>}
         {filter === "current" && planningRequired && <aside class="planning-lock"><strong>Planning comes first.</strong><span>Redistribute overdue work before returning to Current.</span><button class="primary" onClick={() => setFilter("planning")}>Open Planning</button></aside>}
-        {(filter === "planning" || filter === "today") && <div class="planning-tools" role="toolbar" aria-label="Planning controls"><button class={searchOpen || search ? "active" : ""} aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); if (!searchOpen) window.setTimeout(() => searchInput.current?.focus(), 0); }}>⌕ <span>Search</span></button>{searchOpen && <div class="planning-search"><input ref={searchInput} type="search" value={search} placeholder="Search tasks, notes, and tags" aria-label="Search tasks" onInput={(event) => setSearch(event.currentTarget.value)} /><button class="icon-button" aria-label="Close search" onClick={() => { setSearchOpen(false); setSearch(""); }}>×</button></div>}<details class="view-menu"><summary>View{planningActiveStates.length > 0 && <span class="filter-count" aria-label={`${planningActiveStates.length} active view filters`}>{planningActiveStates.length}</span>}</summary><div class="view-popover"><button aria-pressed={filter === "today"} onClick={(event) => applyDisclosureAction(() => setFilter(filter === "today" ? "planning" : "today"), event.currentTarget)}>{filter === "today" ? "Show all dates" : "Today only"}</button><label class="month-control">Calendar month<input type="month" value={planningMonth} onInput={(event) => applyDisclosureAction(() => { setPlanningMonth(event.currentTarget.value); setFilter("planning"); }, event.currentTarget)} /></label><button aria-pressed={showCompleted} onClick={(event) => applyDisclosureAction(() => setShowCompleted(!showCompleted), event.currentTarget)}>{showCompleted ? "Hide completed" : "Include completed"}</button><button aria-pressed={reorderEnabled} title={planningReorderHelp} onClick={(event) => applyDisclosureAction(() => { setFilter("planning"); setReorderEnabled(!reorderEnabled); }, event.currentTarget)}>{reorderEnabled ? "Finish ordering" : "Reorder tasks"}</button></div></details>{planningActiveStates.map((state) => <span class="active-filter-badge" key={state}>{state}</span>)}</div>}
+        {(filter === "planning" || filter === "today") && <div class="planning-tools" role="toolbar" aria-label="Planning controls"><button class={searchOpen || search ? "active" : ""} aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); if (!searchOpen) window.setTimeout(() => searchInput.current?.focus(), 0); }}><Icon name="search" /><span>Search</span></button>{searchOpen && <div class="planning-search"><input ref={searchInput} type="search" value={search} placeholder="Search tasks, notes, and tags" aria-label="Search tasks" onInput={(event) => setSearch(event.currentTarget.value)} /><button class="icon-button" aria-label="Close search" onClick={() => { setSearchOpen(false); setSearch(""); }}><Icon name="close" /></button></div>}<details class="view-menu"><summary><Icon name="view" />View{planningActiveStates.length > 0 && <span class="filter-count" aria-label={`${planningActiveStates.length} active view filters`}>{planningActiveStates.length}</span>}</summary><div class="view-popover"><button aria-pressed={filter === "today"} onClick={(event) => applyDisclosureAction(() => setFilter(filter === "today" ? "planning" : "today"), event.currentTarget)}>{filter === "today" ? "Show all dates" : "Today only"}</button><label class="month-control">Calendar month<input type="month" value={planningMonth} onInput={(event) => applyDisclosureAction(() => { setPlanningMonth(event.currentTarget.value); setFilter("planning"); }, event.currentTarget)} /></label><button aria-pressed={showCompleted} onClick={(event) => applyDisclosureAction(() => setShowCompleted(!showCompleted), event.currentTarget)}>{showCompleted ? "Hide completed" : "Include completed"}</button><button aria-pressed={reorderEnabled} title={planningReorderHelp} onClick={(event) => applyDisclosureAction(() => { setFilter("planning"); setReorderEnabled(!reorderEnabled); }, event.currentTarget)}>{reorderEnabled ? "Finish ordering" : "Reorder tasks"}</button></div></details>{planningActiveStates.map((state) => <span class="active-filter-badge" key={state}>{state}</span>)}</div>}
         {reorderEnabled && filter === "planning" && <p class="meta">Drag tasks within the same date or month group. Change a task’s schedule to move it between groups.</p>}
         {!(["current", "reports", "planning", "today"] as TaskView[]).includes(filter) && <input class="search" type="search" value={search} placeholder="Search tasks, notes, and tags" aria-label="Search tasks" onInput={(event) => setSearch(event.currentTarget.value)} />}
         {addOpen && (
@@ -771,7 +796,7 @@ export function Workspace({ session, logout, initialView = "current" }: { sessio
         )}
         {filter === "reports" ? <ReportPanel all={orderedTasks.value} /> : filter === "planning" && list.length ? (
           <div class="planning-groups">
-            {planningGroups.map(([group, groupTasks]) => <section class="planning-group" key={group}><header><div><span>{group.length === 7 ? "Month" : group < date ? "Overdue" : group === date ? "Today" : "Scheduled"}</span><h2>{group}</h2></div><button class="group-add" aria-label={`Add task for ${group}`} onClick={() => { setAddDate(group.length === 10 ? group : ""); setAddMonth(group.slice(0, 7)); setAddOpen(true); window.setTimeout(() => quickAddInput.current?.focus(), 0); }}>＋</button></header><ul class="task-list">{groupTasks.map((task, index) => <TaskRow key={task.id} task={task} index={index} all={groupTasks} current={false} expanded={expanded === task.id} onExpand={() => setExpanded(expanded === task.id ? null : task.id)} settings={settings} currentUserId={session.user.id} reorderEnabled={reorderEnabled} onDragStart={() => setDraggingId(task.id)} onDrop={() => dropTaskBefore(task.id)} />)}</ul></section>)}
+            {planningGroups.map(([group, groupTasks]) => <section class={`planning-group ${group < date ? "is-overdue-group" : ""}`} key={group}><header><div><span>{group.length === 7 ? "Month" : group < date ? "Overdue" : group === date ? "Today" : "Scheduled"}</span><h2>{group}</h2></div><button class="group-add" aria-label={`Add task for ${group}`} onClick={() => { setAddDate(group.length === 10 ? group : ""); setAddMonth(group.slice(0, 7)); setAddOpen(true); window.setTimeout(() => quickAddInput.current?.focus(), 0); }}><Icon name="plus" /></button></header><ul class="task-list">{groupTasks.map((task, index) => <TaskRow key={task.id} task={task} index={index} all={groupTasks} current={false} expanded={expanded === task.id} onExpand={() => setExpanded(expanded === task.id ? null : task.id)} settings={settings} currentUserId={session.user.id} hideSchedule reorderEnabled={reorderEnabled} onDragStart={() => setDraggingId(task.id)} onDrop={() => dropTaskBefore(task.id)} />)}</ul></section>)}
           </div>
         ) : list.length ? (
           <ul class="task-list">
@@ -787,8 +812,7 @@ export function Workspace({ session, logout, initialView = "current" }: { sessio
           <p class="empty">{filter === "current" && planningRequired ? "Current is locked until planning is complete." : filter === "current" ? "All done for now. Enjoy the clear mind." : "Nothing here. Your list has room to breathe."}</p>
         )}
       </main>
-      <footer><span>Local-first · revisioned history</span><button class="quiet" onClick={logout}>Log out</button></footer>
-      <nav class="mobile-nav" aria-label="Mobile Todorant workflow"><button class={filter === "current" ? "active" : ""} onClick={() => setFilter("current")}><span aria-hidden="true">●</span>Current</button><button class={filter === "planning" || filter === "today" ? "active" : ""} onClick={() => setFilter("planning")}><span aria-hidden="true">▦</span>Planning</button><button class="mobile-add" aria-keyshortcuts="A" onClick={openGlobalAdd}><span aria-hidden="true">＋</span>Add</button><details class="mobile-more"><summary><span aria-hidden="true">•••</span>More</summary><div class="menu-panel"><button onClick={(event) => chooseView("reports", event)}>Report</button><button onClick={(event) => chooseView("delegation", event)}>Delegation</button><button onClick={(event) => { setRulesOpen(true); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Rules</button><button onClick={(event) => { setSettingsOpen(true); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Settings</button><p class={`menu-status ${connection.value}`}><span aria-hidden="true" />Sync {connection.value}{pendingCount.value ? ` · ${pendingCount.value} queued` : ""}</p><button onClick={(event) => chooseView("all", event)}>All tasks</button><button onClick={(event) => chooseView("trash", event)}>Trash</button></div></details></nav>
+      <nav class="mobile-nav" aria-label="Mobile Todorant workflow"><button class={filter === "current" ? "active" : ""} onClick={() => setFilter("current")}><Icon name="focus" />Current</button><button class={filter === "planning" || filter === "today" ? "active" : ""} onClick={() => setFilter("planning")}><Icon name="calendar" />Planning</button><button class="mobile-add" aria-keyshortcuts="A" onClick={openGlobalAdd}><Icon name="plus" />Add</button><details class="mobile-more"><summary><Icon name="more" />More</summary><div class="menu-panel"><button onClick={(event) => chooseView("reports", event)}>Report</button><button onClick={(event) => chooseView("delegation", event)}>Delegation</button><button onClick={(event) => { setRulesOpen(true); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Rules</button><button onClick={(event) => { setSettingsOpen(true); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Settings</button><p class={`menu-status ${connection.value}`}><span aria-hidden="true" />Sync {connection.value}{pendingCount.value ? ` · ${pendingCount.value} queued` : ""}</p><button onClick={(event) => chooseView("all", event)}>All tasks</button><button onClick={(event) => chooseView("trash", event)}>Trash</button></div></details></nav>
       {rulesOpen && <RulesPanel close={() => setRulesOpen(false)} />}
       {settingsOpen && <SettingsPanel session={session} settings={settings} updateSettings={setSettings} close={() => setSettingsOpen(false)} />}
     </div>
