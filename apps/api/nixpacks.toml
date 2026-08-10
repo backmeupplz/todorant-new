@@ -8,4 +8,4 @@ cmds = ["pnpm install --frozen-lockfile"]
 cmds = ["pnpm --filter @todorant/api build"]
 
 [start]
-cmd = "pnpm --filter @todorant/api db:migrate && node apps/api/dist/server.js"
+cmd = "sh apps/api/start-production.sh"

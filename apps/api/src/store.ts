@@ -42,6 +42,7 @@ export type ReportData = {
 export interface DataStore {
   createUser(email: string, passwordHash: string): Promise<UserRecord>;
   findUserByEmail(email: string): Promise<UserRecord | null>;
+  updatePasswordHash(userId: string, passwordHash: string): Promise<void>;
   createSession(session: SessionRecord): Promise<void>;
   getSession(tokenHash: string): Promise<(SessionRecord & { user: UserRecord }) | null>;
   deleteSession(tokenHash: string): Promise<void>;

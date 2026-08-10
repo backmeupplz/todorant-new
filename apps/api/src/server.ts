@@ -8,10 +8,19 @@ const databaseUrl = process.env.DATABASE_URL;
 const sessionPepper = process.env.SESSION_PEPPER;
 if (!databaseUrl) throw new Error("DATABASE_URL is required");
 if (!sessionPepper || sessionPepper.length < 32) throw new Error("SESSION_PEPPER must be at least 32 characters");
+const bossDatabaseUrl = process.env.BOSS_DATABASE_URL ?? databaseUrl;
+if (process.env.NODE_ENV === "production") {
+  if (!process.env.BOSS_DATABASE_URL) throw new Error("BOSS_DATABASE_URL is required in production");
+  const applicationUser = decodeURIComponent(new URL(databaseUrl).username);
+  const bossUser = decodeURIComponent(new URL(bossDatabaseUrl).username);
+  if (applicationUser !== "todorant_runtime" || bossUser !== "todorant_boss") {
+    throw new Error("Production database connections must use the dedicated least-privilege roles");
+  }
+}
 
 const hub = new EventHub();
 const { store, pool } = createPostgresStore(databaseUrl, hub.publish);
-const boss = new PgBoss(databaseUrl);
+const boss = new PgBoss({ connectionString: bossDatabaseUrl, schema: "pgboss", createSchema: false });
 await boss.start();
 await boss.createQueue("legacy-import");
 await boss.work<{ run: ImportRun; legacyUserId: string }>("legacy-import", async (jobs) => {
@@ -40,6 +49,7 @@ const app = await buildApp({
   eventHub: hub,
   sessionPepper,
   production: process.env.NODE_ENV === "production",
+  ...(process.env.WEB_ORIGIN ? { webOrigin: process.env.WEB_ORIGIN } : {}),
   logger: true,
   importQueue: {
     async verifyOwnership(email, legacyToken) {

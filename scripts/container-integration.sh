@@ -57,6 +57,19 @@ export TEST_DATABASE_URL
 
 pnpm db:migrate
 pnpm --filter @todorant/api test:integration
+pnpm --filter @todorant/api exec node --input-type=module -e \
+  'import { PgBoss } from "pg-boss"; const boss = new PgBoss(process.env.DATABASE_URL); await boss.start(); await boss.stop({ graceful: true });'
+
+MIGRATION_DATABASE_URL=$DATABASE_URL
+DATABASE_RUNTIME_PASSWORD=fixture-runtime-password-that-is-at-least-32-characters
+DATABASE_BOSS_PASSWORD=fixture-boss-password-that-is-at-least-32-characters
+export MIGRATION_DATABASE_URL DATABASE_RUNTIME_PASSWORD DATABASE_BOSS_PASSWORD
+pnpm --filter @todorant/api build
+node apps/api/dist/security-bootstrap.js
+TEST_RUNTIME_DATABASE_URL="postgresql://todorant_runtime:$DATABASE_RUNTIME_PASSWORD@127.0.0.1:$pg_port/todorant_test"
+TEST_BOSS_DATABASE_URL="postgresql://todorant_boss:$DATABASE_BOSS_PASSWORD@127.0.0.1:$pg_port/todorant_test"
+export TEST_RUNTIME_DATABASE_URL TEST_BOSS_DATABASE_URL
+pnpm --filter @todorant/api test:security-integration
 
 TEST_LEGACY_MONGO_ADMIN_URL="mongodb://root:fixture-root-password@127.0.0.1:$mongo_port/admin"
 TEST_LEGACY_MONGO_URL="mongodb://legacy_reader:fixture-read-only-password@127.0.0.1:$mongo_port/todorant_legacy_fixture?authSource=todorant_legacy_fixture&readPreference=secondaryPreferred&retryWrites=false"

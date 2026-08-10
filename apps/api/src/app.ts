@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import argon2 from "argon2";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
@@ -8,10 +8,24 @@ import { normalizeEmail, type SyncEvent, type Task, type TaskOperation } from "@
 import type { DataStore, ImportRun, SessionRecord } from "./store.js";
 
 const sessionCookie = "todorant_session";
-const sessionDurationMs = 1000 * 60 * 60 * 24 * 30;
+const sessionDurationMs = 1000 * 60 * 60 * 24 * 14;
 const authError = "Email or password is incorrect";
-const argonOptions = { type: argon2.argon2id, memoryCost: 19_456, timeCost: 2, parallelism: 1 } as const;
+const argonOptions = { type: argon2.argon2id, memoryCost: 65_536, timeCost: 3, parallelism: 1 } as const;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const safeConflictMessages = new Set([
+  "Tasks in the current month need a specific date",
+  "Task not found",
+  "Task already exists",
+  "Base revision is ahead of the canonical task",
+  "Only the owner can change delegation",
+  "Delegation invitation not found",
+  "That delegate account is not available",
+  "Revoke the current delegation first",
+  "Frog tasks cannot be skipped",
+  "Delegation is not pending",
+  "Delegation is not active",
+  "Invalid ordering neighbors"
+]);
 
 type AuthenticatedSession = SessionRecord & {
   user: { id: string; email: string; settings: Record<string, unknown> };
@@ -53,19 +67,84 @@ type AppOptions = {
   sessionPepper: string;
   production?: boolean;
   logger?: boolean;
+  webOrigin?: string;
 };
 
 const hashToken = (token: string, pepper: string): string =>
-  createHash("sha256").update(`${pepper}:${token}`).digest("hex");
+  createHmac("sha256", pepper).update(token).digest("hex");
 
 const credentials = (body: unknown): { email: string; password: string } | null => {
   if (!body || typeof body !== "object") return null;
   const input = body as Record<string, unknown>;
   if (typeof input.email !== "string" || typeof input.password !== "string") return null;
   const email = normalizeEmail(input.email);
-  if (!/^\S+@\S+\.\S+$/u.test(email) || input.password.length < 10 || input.password.length > 256) return null;
+  if (email.length > 254 || !/^\S+@\S+\.\S+$/u.test(email) || input.password.length < 10 || input.password.length > 256) return null;
   return { email, password: input.password };
 };
+
+const parseCursor = (value: unknown): number | null => {
+  if (value === undefined) return 0;
+  if (typeof value !== "string" || !/^\d{1,16}$/u.test(value)) return null;
+  const cursor = Number(value);
+  return Number.isSafeInteger(cursor) ? cursor : null;
+};
+
+const parseSettings = (body: unknown): Record<string, unknown> | null => {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const input = body as Record<string, unknown>;
+  const allowed = new Set([
+    "theme",
+    "showTodayOnAddTodo",
+    "newTodosGoFirst",
+    "preserveOrderByTime",
+    "showMoreByDefault",
+    "duplicateTagInBreakdown",
+    "firstDayOfWeek",
+    "startTimeOfDay",
+    "epicGoals"
+  ]);
+  if (Object.keys(input).length === 0 || Object.keys(input).some((key) => !allowed.has(key))) return null;
+  const settings: Record<string, unknown> = {};
+  if (input.theme !== undefined) {
+    if (!["system", "light", "dark"].includes(String(input.theme))) return null;
+    settings.theme = input.theme;
+  }
+  for (const key of [
+    "showTodayOnAddTodo",
+    "newTodosGoFirst",
+    "preserveOrderByTime",
+    "showMoreByDefault",
+    "duplicateTagInBreakdown"
+  ]) {
+    if (input[key] !== undefined) {
+      if (typeof input[key] !== "boolean") return null;
+      settings[key] = input[key];
+    }
+  }
+  if (input.firstDayOfWeek !== undefined) {
+    if (![0, 1, 6].includes(input.firstDayOfWeek as number)) return null;
+    settings.firstDayOfWeek = input.firstDayOfWeek;
+  }
+  if (input.startTimeOfDay !== undefined) {
+    if (typeof input.startTimeOfDay !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/u.test(input.startTimeOfDay)) return null;
+    settings.startTimeOfDay = input.startTimeOfDay;
+  }
+  if (input.epicGoals !== undefined) {
+    if (!input.epicGoals || typeof input.epicGoals !== "object" || Array.isArray(input.epicGoals)) return null;
+    const goals = input.epicGoals as Record<string, unknown>;
+    if (
+      Object.keys(goals).length > 100 ||
+      Object.entries(goals).some(([key, value]) =>
+        key.length < 1 || key.length > 100 || typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > 1_000_000
+      )
+    ) return null;
+    settings.epicGoals = goals;
+  }
+  return settings;
+};
+
+const publicConflictMessage = (error: unknown, fallback: string): string =>
+  error instanceof Error && safeConflictMessages.has(error.message) ? error.message : fallback;
 
 const parseOperation = (body: unknown): TaskOperation | null => {
   if (!body || typeof body !== "object") return null;
@@ -120,10 +199,12 @@ const parseOperation = (body: unknown): TaskOperation | null => {
   if (source.schedule !== undefined) {
     if (!source.schedule || typeof source.schedule !== "object") return null;
     const schedule = source.schedule as Record<string, unknown>;
+    if (Object.keys(schedule).some((key) => !["month", "date", "time", "timezone"].includes(key))) return null;
     if (![schedule.month, schedule.date, schedule.time, schedule.timezone].every((entry) => entry === null || typeof entry === "string")) return null;
     if (schedule.month !== null && !/^\d{4}-\d{2}$/u.test(schedule.month as string)) return null;
     if (schedule.date !== null && !/^\d{4}-\d{2}-\d{2}$/u.test(schedule.date as string)) return null;
     if (schedule.time !== null && !/^\d{2}:\d{2}$/u.test(schedule.time as string)) return null;
+    if (typeof schedule.timezone === "string" && schedule.timezone.length > 64) return null;
     changedFields.schedule = {
       month: schedule.month as string | null,
       date: schedule.date as string | null,
@@ -140,7 +221,13 @@ const parseOperation = (body: unknown): TaskOperation | null => {
     else {
       if (!source.encryption || typeof source.encryption !== "object") return null;
       const encryption = source.encryption as Record<string, unknown>;
-      if (typeof encryption.algorithm !== "string" || typeof encryption.keyId !== "string") return null;
+      if (
+        typeof encryption.algorithm !== "string" ||
+        !["AES-256-GCM/PBKDF2-SHA256", "legacy-aes"].includes(encryption.algorithm) ||
+        typeof encryption.keyId !== "string" ||
+        encryption.keyId.length < 1 ||
+        encryption.keyId.length > 128
+      ) return null;
       changedFields.encryption = { algorithm: encryption.algorithm, keyId: encryption.keyId };
     }
   }
@@ -199,19 +286,49 @@ const reportFor = (tasks: Task[]) => {
 };
 
 export async function buildApp(options: AppOptions) {
+  const production = options.production === true;
+  const webOrigin = options.webOrigin?.replace(/\/$/u, "");
+  if (production && (!webOrigin || new URL(webOrigin).origin !== webOrigin)) {
+    throw new Error("A canonical WEB_ORIGIN is required in production");
+  }
+  const cookieName = production ? `__Host-${sessionCookie}` : sessionCookie;
   const app = Fastify({
-    logger: options.logger ?? false,
+    logger: options.logger
+      ? {
+          redact: {
+            paths: ["req.headers.cookie", "req.headers.authorization", "req.headers['x-csrf-token']", "request.headers.cookie"],
+            censor: "[REDACTED]"
+          }
+        }
+      : false,
     bodyLimit: 64 * 1024,
-    trustProxy: options.production === true
+    trustProxy: production ? 1 : false
   });
   await app.register(cookie);
-  await app.register(rateLimit, { global: false, max: 100, timeWindow: "1 minute" });
+  await app.register(rateLimit, {
+    global: true,
+    max: 300,
+    timeWindow: "1 minute",
+    keyGenerator: (request) => {
+      const token = request.cookies?.[cookieName];
+      return token ? `session:${hashToken(token, options.sessionPepper)}` : request.ip || request.socket?.remoteAddress || "unknown-client";
+    }
+  });
   await app.register(websocket, { options: { maxPayload: 16 * 1024 } });
   app.decorateRequest("authSession", null);
+  const activeSockets = new Map<string, number>();
   const dummyHash = await argon2.hash("timing-equalization-password", argonOptions);
 
+  app.addHook("onRequest", async (request, reply) => {
+    if (request.url.startsWith("/api/")) reply.header("cache-control", "no-store");
+    const unsafe = !["GET", "HEAD", "OPTIONS"].includes(request.method);
+    if (production && (unsafe || request.url.startsWith("/ws")) && request.headers.origin !== webOrigin) {
+      return reply.code(403).send({ error: "Request origin is not allowed" });
+    }
+  });
+
   const authenticate = async (request: FastifyRequest) => {
-    const token = request.cookies[sessionCookie];
+    const token = request.cookies[cookieName];
     if (!token) return null;
     return options.store.getSession(hashToken(token, options.sessionPepper));
   };
@@ -244,9 +361,9 @@ export async function buildApp(options: AppOptions) {
       expiresAt: new Date(Date.now() + sessionDurationMs)
     };
     await options.store.createSession(session);
-    reply.setCookie(sessionCookie, token, {
+    reply.setCookie(cookieName, token, {
       httpOnly: true,
-      secure: options.production === true,
+      secure: production,
       sameSite: "strict",
       path: "/",
       maxAge: sessionDurationMs / 1000
@@ -295,6 +412,9 @@ export async function buildApp(options: AppOptions) {
       if (!user || !passwordMatches) {
         return reply.code(401).send({ error: authError });
       }
+      if (argon2.needsRehash(user.passwordHash, argonOptions)) {
+        await options.store.updatePasswordHash(user.id, await argon2.hash(input.password, argonOptions));
+      }
       const csrfToken = await startSession(user.id, reply);
       return { user: { id: user.id, email: user.email }, csrfToken, settings: user.settings };
     }
@@ -310,25 +430,31 @@ export async function buildApp(options: AppOptions) {
   });
 
   app.post("/api/auth/logout", { preHandler: [requireAuth, requireCsrf] }, async (request, reply) => {
-    const token = request.cookies[sessionCookie];
+    const token = request.cookies[cookieName];
     if (token) await options.store.deleteSession(hashToken(token, options.sessionPepper));
-    reply.clearCookie(sessionCookie, { path: "/" });
+    reply.clearCookie(cookieName, { path: "/", secure: production, sameSite: "strict" });
     return reply.code(204).send();
   });
 
-  app.get("/api/snapshot", { preHandler: [requireAuth] }, async (request) => {
+  app.get("/api/snapshot", { preHandler: [requireAuth] }, async (request, reply) => {
     const query = request.query as { cursor?: string };
-    const cursor = Math.max(0, Number(query.cursor ?? 0) || 0);
+    const cursor = parseCursor(query.cursor);
+    if (cursor === null) return reply.code(400).send({ error: "Invalid sync cursor" });
     return options.store.snapshot(currentSession(request).user.id, cursor);
   });
 
-  app.post("/api/commands", { preHandler: [requireAuth, requireCsrf] }, async (request, reply) => {
+  app.post("/api/commands", {
+    preHandler: [requireAuth, requireCsrf],
+    config: { rateLimit: { max: 240, timeWindow: "1 minute" } }
+  }, async (request, reply) => {
     const operation = parseOperation(request.body);
     if (!operation) return reply.code(400).send({ error: "Invalid task operation" });
     try {
       return await options.store.applyCommand(currentSession(request).user.id, operation);
     } catch (error) {
-      return reply.code(409).send({ error: error instanceof Error ? error.message : "Command rejected" });
+      const message = publicConflictMessage(error, "Command rejected");
+      if (message === "Command rejected") request.log.error({ err: error }, message);
+      return reply.code(409).send({ error: message });
     }
   });
 
@@ -343,7 +469,10 @@ export async function buildApp(options: AppOptions) {
     reportFor((await options.store.snapshot(currentSession(request).user.id, 0)).tasks)
   );
 
-  app.post("/api/report/share", { preHandler: [requireAuth, requireCsrf] }, async (request) => {
+  app.post("/api/report/share", {
+    preHandler: [requireAuth, requireCsrf],
+    config: { rateLimit: { max: 10, timeWindow: "1 hour" } }
+  }, async (request) => {
     const userId = currentSession(request).user.id;
     const data = reportFor((await options.store.snapshot(userId, 0)).tasks);
     return { id: await options.store.createReport(userId, data) };
@@ -388,12 +517,17 @@ export async function buildApp(options: AppOptions) {
         const result = await options.store.applyCommand(currentSession(request).user.id, operation);
         return response === "reject" ? reply.code(204).send() : result;
       } catch (error) {
-        return reply.code(409).send({ error: error instanceof Error ? error.message : "Delegation response rejected" });
+        const message = publicConflictMessage(error, "Delegation response rejected");
+        if (message === "Delegation response rejected") request.log.error({ err: error }, message);
+        return reply.code(409).send({ error: message });
       }
     });
   }
 
-  app.post("/api/delegates/resolve", { preHandler: [requireAuth, requireCsrf] }, async (request, reply) => {
+  app.post("/api/delegates/resolve", {
+    preHandler: [requireAuth, requireCsrf],
+    config: { rateLimit: { max: 20, timeWindow: "15 minutes" } }
+  }, async (request, reply) => {
     const rawEmail = request.body && typeof request.body === "object"
       ? (request.body as Record<string, unknown>).email
       : null;
@@ -406,16 +540,23 @@ export async function buildApp(options: AppOptions) {
   });
 
   app.patch("/api/settings", { preHandler: [requireAuth, requireCsrf] }, async (request, reply) => {
-    if (!request.body || typeof request.body !== "object") return reply.code(400).send({ error: "Invalid settings" });
-    return options.store.setSettings(currentSession(request).user.id, request.body as Record<string, unknown>);
+    const settings = parseSettings(request.body);
+    if (!settings) return reply.code(400).send({ error: "Invalid settings" });
+    return options.store.setSettings(currentSession(request).user.id, settings);
   });
 
-  app.get("/api/export", { preHandler: [requireAuth] }, async (request, reply) => {
+  app.get("/api/export", {
+    preHandler: [requireAuth],
+    config: { rateLimit: { max: 5, timeWindow: "1 hour" } }
+  }, async (request, reply) => {
     reply.header("content-disposition", 'attachment; filename="todorant-export.json"');
     return options.store.exportData(currentSession(request).user.id);
   });
 
-  app.post("/api/import", { preHandler: [requireAuth, requireCsrf] }, async (request, reply) => {
+  app.post("/api/import", {
+    preHandler: [requireAuth, requireCsrf],
+    config: { rateLimit: { max: 3, timeWindow: "1 hour" } }
+  }, async (request, reply) => {
     const session = currentSession(request);
     const legacyToken =
       request.body && typeof request.body === "object"
@@ -445,18 +586,34 @@ export async function buildApp(options: AppOptions) {
     "/ws",
     {
       websocket: true,
+      config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
       preValidation: async (request, reply) => {
         const session = await authenticate(request);
         if (!session) return reply.code(401).send({ error: "Authentication required" });
+        if (activeSockets.get(session.user.id) && (activeSockets.get(session.user.id) ?? 0) >= 5) {
+          return reply.code(429).send({ error: "Too many realtime connections" });
+        }
+        const cursor = parseCursor((request.query as { cursor?: string }).cursor);
+        if (cursor === null) return reply.code(400).send({ error: "Invalid sync cursor" });
         request.authSession = session;
       }
     },
     (socket, request) => {
       const session = currentSession(request);
-      const cursor = Math.max(0, Number((request.query as { cursor?: string }).cursor ?? 0) || 0);
+      const cursor = parseCursor((request.query as { cursor?: string }).cursor) ?? 0;
+      activeSockets.set(session.user.id, (activeSockets.get(session.user.id) ?? 0) + 1);
       let closed = false;
       let ready = false;
+      let alive = true;
       const buffered: SyncEvent[] = [];
+      const heartbeat = setInterval(() => {
+        if (!alive) return socket.terminate();
+        alive = false;
+        socket.ping();
+      }, 30_000);
+      socket.on("pong", () => {
+        alive = true;
+      });
       const send = (event: SyncEvent) => {
         if (!closed && socket.readyState === socket.OPEN) socket.send(JSON.stringify({ type: "event", event }));
       };
@@ -480,6 +637,10 @@ export async function buildApp(options: AppOptions) {
         .catch(() => socket.close(1011, "Snapshot unavailable"));
       socket.on("close", () => {
         closed = true;
+        clearInterval(heartbeat);
+        const remaining = Math.max(0, (activeSockets.get(session.user.id) ?? 1) - 1);
+        if (remaining === 0) activeSockets.delete(session.user.id);
+        else activeSockets.set(session.user.id, remaining);
         unsubscribe();
       });
     }
