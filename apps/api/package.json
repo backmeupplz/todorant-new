@@ -1,0 +1,37 @@
+{
+  "name": "@todorant/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "db:check": "tsx scripts/check-migrations.ts",
+    "db:migrate": "drizzle-kit migrate",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "test": "vitest run --pool=threads",
+    "test:integration": "vitest run --pool=threads src/postgres.integration.test.ts",
+    "test:legacy-integration": "vitest run --pool=threads src/legacy-mongo.integration.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@fastify/cookie": "11.1.2",
+    "@fastify/rate-limit": "11.2.0",
+    "@fastify/websocket": "11.3.0",
+    "@todorant/domain": "workspace:*",
+    "argon2": "0.45.1",
+    "drizzle-orm": "0.45.2",
+    "fastify": "5.11.3",
+    "mongodb": "7.5.0",
+    "pg": "8.23.0",
+    "pg-boss": "12.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/pg": "8.16.0",
+    "drizzle-kit": "0.31.10",
+    "tsx": "4.21.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10"
+  }
+}

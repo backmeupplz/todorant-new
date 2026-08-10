@@ -1,0 +1,64 @@
+#!/bin/sh
+set -eu
+
+engine=${CONTAINER_ENGINE:-podman}
+container="todorant-postgres-integration-$$"
+mongo_container="todorant-mongo-integration-$$"
+pg_port=55432
+mongo_port=55433
+image="docker.io/library/postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15"
+mongo_image="docker.io/library/mongo:8.0.14-noble@sha256:877fa303326645cd0e50a3833fce2f3c03d6eb4aac82c97a02e98879f51126d3"
+
+cleanup() {
+  "$engine" rm -f "$container" >/dev/null 2>&1 || true
+  "$engine" rm -f "$mongo_container" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT INT TERM
+
+"$engine" run --name "$container" --rm -d \
+  -e POSTGRES_DB=todorant_test \
+  -e POSTGRES_USER=todorant \
+  -e POSTGRES_PASSWORD=todorant \
+  -p "$pg_port:5432" \
+  "$image" >/dev/null
+
+"$engine" run --name "$mongo_container" --rm -d \
+  -e MONGO_INITDB_ROOT_USERNAME=root \
+  -e MONGO_INITDB_ROOT_PASSWORD=fixture-root-password \
+  -p "$mongo_port:27017" \
+  "$mongo_image" >/dev/null
+
+attempt=0
+until "$engine" exec "$container" pg_isready -U todorant -d todorant_test >/dev/null 2>&1; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 60 ]; then
+    "$engine" logs "$container"
+    exit 1
+  fi
+  sleep 1
+done
+
+attempt=0
+until "$engine" exec "$mongo_container" mongosh --quiet \
+  -u root -p fixture-root-password --authenticationDatabase admin \
+  --eval 'db.adminCommand({ ping: 1 }).ok' >/dev/null 2>&1; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 60 ]; then
+    "$engine" logs "$mongo_container"
+    exit 1
+  fi
+  sleep 1
+done
+
+DATABASE_URL="postgresql://todorant:todorant@127.0.0.1:$pg_port/todorant_test"
+export DATABASE_URL
+TEST_DATABASE_URL=$DATABASE_URL
+export TEST_DATABASE_URL
+
+pnpm db:migrate
+pnpm --filter @todorant/api test:integration
+
+TEST_LEGACY_MONGO_ADMIN_URL="mongodb://root:fixture-root-password@127.0.0.1:$mongo_port/admin"
+TEST_LEGACY_MONGO_URL="mongodb://legacy_reader:fixture-read-only-password@127.0.0.1:$mongo_port/todorant_legacy_fixture?authSource=todorant_legacy_fixture&readPreference=secondaryPreferred&retryWrites=false"
+export TEST_LEGACY_MONGO_ADMIN_URL TEST_LEGACY_MONGO_URL
+pnpm --filter @todorant/api test:legacy-integration

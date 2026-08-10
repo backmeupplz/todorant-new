@@ -1,0 +1,31 @@
+name: Local build
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-build:
+    name: Local build completed
+    runs-on: [self-hosted, macOS, ARM64, todorant-new, local-build]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v5
+        with:
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm validate
+      - name: Validate migrations and PostgreSQL/WebSocket integration
+        run: |
+          podman info >/dev/null 2>&1 || podman machine start
+          CONTAINER_ENGINE=podman scripts/container-integration.sh

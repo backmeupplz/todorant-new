@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+    environment:
+      POSTGRES_DB: todorant
+      POSTGRES_PASSWORD: todorant
+      POSTGRES_USER: todorant
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U todorant -d todorant"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "5432:5432"
+    volumes:
+      - todorant-postgres:/var/lib/postgresql
+
+volumes:
+  todorant-postgres:

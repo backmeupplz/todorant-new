@@ -1,0 +1,17 @@
+:{$PORT:8080} {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy {$API_UPSTREAM:http://api:3000}
+	}
+
+	handle /ws {
+		reverse_proxy {$API_UPSTREAM:http://api:3000}
+	}
+
+	handle {
+		root * apps/web/dist
+		try_files {path} /index.html
+		file_server
+	}
+}

@@ -1,0 +1,29 @@
+{
+  "name": "@todorant/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "budget": "node scripts/check-budget.mjs",
+    "dev": "vite",
+    "test": "vitest run --pool=threads",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@preact/signals": "2.11.0",
+    "@todorant/domain": "workspace:*",
+    "idb": "8.0.3",
+    "preact": "10.29.8"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "2.10.6",
+    "@tailwindcss/vite": "4.3.3",
+    "fake-indexeddb": "6.2.5",
+    "preact-render-to-string": "6.6.6",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.3",
+    "vite": "8.2.1",
+    "vitest": "4.1.10"
+  }
+}
