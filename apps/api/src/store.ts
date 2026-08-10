@@ -33,6 +33,12 @@ export type LegacyRecord = {
   payload: Record<string, unknown>;
 };
 
+export type ReportData = {
+  completedTodosMap: Record<string, number>;
+  completedFrogsMap: Record<string, number>;
+  generatedAt: string;
+};
+
 export interface DataStore {
   createUser(email: string, passwordHash: string): Promise<UserRecord>;
   findUserByEmail(email: string): Promise<UserRecord | null>;
@@ -42,6 +48,8 @@ export interface DataStore {
   snapshot(userId: string, afterCursor: number): Promise<{ tasks: Task[]; events: SyncEvent[]; cursor: number }>;
   applyCommand(userId: string, operation: TaskOperation): Promise<CommandResult>;
   history(userId: string, taskId: string): Promise<SyncEvent[]>;
+  createReport(userId: string, data: ReportData): Promise<string>;
+  publicReport(id: string): Promise<ReportData | null>;
   getSettings(userId: string): Promise<Record<string, unknown>>;
   setSettings(userId: string, settings: Record<string, unknown>): Promise<Record<string, unknown>>;
   createImportRun(userId: string, retryOf: string | null): Promise<ImportRun>;

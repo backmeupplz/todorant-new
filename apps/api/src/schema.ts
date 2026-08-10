@@ -12,6 +12,7 @@ import {
   uuid
 } from "drizzle-orm/pg-core";
 import type { CommandResult, Conflict, Task } from "@todorant/domain";
+import type { ReportData } from "./store.js";
 
 export const users = pgTable(
   "users",
@@ -42,6 +43,7 @@ export const tasks = pgTable(
   {
     id: uuid("id").notNull(),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    delegateId: uuid("delegate_id").references(() => users.id, { onDelete: "set null" }),
     revision: integer("revision").notNull(),
     rank: text("rank").notNull(),
     deleted: boolean("deleted").notNull().default(false),
@@ -50,7 +52,8 @@ export const tasks = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.id] }),
-    index("tasks_user_rank_idx").on(table.userId, table.rank)
+    index("tasks_user_rank_idx").on(table.userId, table.rank),
+    index("tasks_delegate_rank_idx").on(table.delegateId, table.rank)
   ]
 );
 
@@ -70,6 +73,7 @@ export const taskEvents = pgTable(
   {
     cursor: bigint("cursor", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    delegateId: uuid("delegate_id").references(() => users.id, { onDelete: "set null" }),
     taskId: uuid("task_id").notNull(),
     revision: integer("revision").notNull(),
     operationId: uuid("operation_id").notNull(),
@@ -80,7 +84,8 @@ export const taskEvents = pgTable(
   },
   (table) => [
     index("task_events_user_cursor_idx").on(table.userId, table.cursor),
-    index("task_events_task_revision_idx").on(table.userId, table.taskId, table.revision)
+    index("task_events_task_revision_idx").on(table.userId, table.taskId, table.revision),
+    index("task_events_delegate_cursor_idx").on(table.delegateId, table.cursor)
   ]
 );
 
@@ -111,4 +116,15 @@ export const legacyImports = pgTable(
     importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow()
   },
   (table) => [primaryKey({ columns: [table.userId, table.kind, table.legacyId] })]
+);
+
+export const reports = pgTable(
+  "reports",
+  {
+    id: uuid("id").primaryKey(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    data: jsonb("data").$type<ReportData>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [index("reports_user_created_idx").on(table.userId, table.createdAt)]
 );

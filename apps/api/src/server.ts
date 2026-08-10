@@ -14,7 +14,7 @@ const { store, pool } = createPostgresStore(databaseUrl, hub.publish);
 const boss = new PgBoss(databaseUrl);
 await boss.start();
 await boss.createQueue("legacy-import");
-await boss.work<{ run: ImportRun; email: string }>("legacy-import", async (jobs) => {
+await boss.work<{ run: ImportRun; legacyUserId: string }>("legacy-import", async (jobs) => {
   for (const job of jobs) {
     const url = process.env.LEGACY_MONGO_URL;
     if (!url) {
@@ -31,7 +31,7 @@ await boss.work<{ run: ImportRun; email: string }>("legacy-import", async (jobs)
       store,
       new MongoLegacyReader(url, process.env.LEGACY_MONGO_DATABASE ?? "todorant")
     );
-    await migration.run(job.data.run, job.data.email);
+    await migration.run(job.data.run, job.data.legacyUserId);
   }
 });
 
@@ -42,8 +42,16 @@ const app = await buildApp({
   production: process.env.NODE_ENV === "production",
   logger: true,
   importQueue: {
-    async enqueue(run, email) {
-      await boss.send("legacy-import", { run, email }, { singletonKey: run.id });
+    async verifyOwnership(email, legacyToken) {
+      const url = process.env.LEGACY_MONGO_URL;
+      if (!url) throw new Error("Legacy import is not configured");
+      return new MongoLegacyReader(url, process.env.LEGACY_MONGO_DATABASE ?? "todorant").verifyOwnership(
+        email,
+        legacyToken
+      );
+    },
+    async enqueue(run, legacyUserId) {
+      await boss.send("legacy-import", { run, legacyUserId }, { singletonKey: run.id });
     }
   }
 });

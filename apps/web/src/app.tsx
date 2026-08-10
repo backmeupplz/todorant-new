@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { canonicalRules, type Conflict, type Task } from "@todorant/domain";
+import { canonicalRules, compareRanks, type Conflict, type SyncEvent, type Task } from "@todorant/domain";
 import {
   api,
   conflicts,
@@ -9,9 +9,13 @@ import {
   pull,
   queueCommand,
   resolveConflict,
+  syncErrors,
+  retryFailedOperation,
+  discardFailedOperation,
   startSync,
   stopSync
 } from "./sync.js";
+import { decryptValue, encryptionPassphrase, encryptTaskFields } from "./encryption.js";
 
 type Session = {
   user: { id: string; email: string };
@@ -88,9 +92,13 @@ export function Landing({ onAuthenticated }: { onAuthenticated: (session: Sessio
   );
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => {
+  const date = new Date();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
 
-function TaskRow({
+export function TaskRow({
   task,
   index,
   all,
@@ -105,12 +113,46 @@ function TaskRow({
   expanded: boolean;
   onExpand: () => void;
 }) {
-  const [text, setText] = useState(task.text);
-  useEffect(() => setText(task.text), [task.text]);
+  const [text, setText] = useState(task.encryption ? "Encrypted task" : task.text);
+  const [note, setNote] = useState(task.encryption ? "" : task.note);
+  const [breakdown, setBreakdown] = useState("");
+  const [delegateEmail, setDelegateEmail] = useState("");
+  const [history, setHistory] = useState<SyncEvent[] | null>(null);
+  const [encryptionUnlocked, setEncryptionUnlocked] = useState(task.encryption === null);
+  useEffect(() => {
+    if (!task.encryption) {
+      setEncryptionUnlocked(true);
+      setText(task.text);
+      setNote(task.note);
+      return;
+    }
+    const passphrase = encryptionPassphrase.value;
+    if (!passphrase || task.encryption.algorithm === "legacy-aes") {
+      setEncryptionUnlocked(false);
+      setText(task.encryption.algorithm === "legacy-aes" ? "Legacy encrypted task" : "Encrypted task · enter key in Settings");
+      setNote("");
+      return;
+    }
+    void Promise.all([decryptValue(task.text, passphrase), decryptValue(task.note, passphrase)])
+      .then(([plainText, plainNote]) => {
+        setEncryptionUnlocked(true);
+        setText(plainText);
+        setNote(plainNote);
+      })
+      .catch(() => {
+        setEncryptionUnlocked(false);
+        setText("Encrypted task · wrong key");
+        setNote("");
+      });
+  }, [task.text, task.note, task.encryption, encryptionPassphrase.value]);
 
-  const saveText = () => {
+  const saveText = async () => {
     const value = text.trim();
-    if (value && value !== task.text) void queueCommand(task.id, "update", { text: value });
+    if (value && !task.encryption && value !== task.text) await queueCommand(task.id, "update", { text: value });
+    else if (value && task.encryption && encryptionPassphrase.value) {
+      const fields = await encryptTaskFields(value, note, encryptionPassphrase.value);
+      await queueCommand(task.id, "update", fields);
+    }
     else setText(task.text);
   };
   const move = (direction: -1 | 1) => {
@@ -128,6 +170,54 @@ function TaskRow({
       tagChanges: { add: next.filter((tag) => !task.tags.includes(tag)), remove: task.tags.filter((tag) => !next.includes(tag)) }
     });
   };
+  const copyTask = async () => {
+    const taskId = crypto.randomUUID();
+    await queueCommand(taskId, "create", {
+      text: task.text,
+      note: task.note,
+      schedule: task.schedule,
+      repetitive: task.repetitive,
+      epicId: task.epicId,
+      frog: false,
+      parentId: task.parentId
+    });
+    if (task.tags.length) {
+      await queueCommand(taskId, "tags", {}, { tagChanges: { add: task.tags, remove: [] } });
+    }
+  };
+  const complete = async () => {
+    if (task.repetitive && window.confirm("Copy this repetitive task as a new conscious occurrence before completing it?")) {
+      await copyTask();
+    }
+    await queueCommand(task.id, task.completedAt ? "reopen" : "complete");
+  };
+  const breakDown = async () => {
+    const subtasks = breakdown.split("\n").map((item) => item.trim()).filter(Boolean);
+    if (!subtasks.length) return;
+    for (const subtask of subtasks) {
+      const taskId = crypto.randomUUID();
+      await queueCommand(taskId, "create", {
+        text: subtask,
+        schedule: task.schedule,
+        repetitive: false,
+        epicId: task.epicId,
+        parentId: task.id
+      });
+      if (task.tags.length) {
+        await queueCommand(taskId, "tags", {}, { tagChanges: { add: task.tags, remove: [] } });
+      }
+    }
+    setBreakdown("");
+    if (!task.completedAt) await queueCommand(task.id, "complete");
+  };
+  const delegate = async () => {
+    const result = await api.request<{ userId: string }>("/api/delegates/resolve", {
+      method: "POST",
+      body: JSON.stringify({ email: delegateEmail })
+    });
+    await queueCommand(task.id, "update", { delegateId: result.userId });
+    setDelegateEmail("");
+  };
 
   return (
     <li class={`task ${task.completedAt ? "is-complete" : ""} ${current ? "is-current" : ""}`}>
@@ -136,16 +226,17 @@ function TaskRow({
           class="check"
           aria-label={task.completedAt ? `Reopen ${task.text}` : `Complete ${task.text}`}
           aria-pressed={task.completedAt !== null}
-          onClick={() => void queueCommand(task.id, task.completedAt ? "reopen" : "complete")}
+          onClick={() => void complete()}
         >
           {task.completedAt ? "✓" : ""}
         </button>
         <input
           class="task-title"
           value={text}
+          disabled={task.encryption !== null && !encryptionUnlocked}
           aria-label="Task title"
           onInput={(event) => setText(event.currentTarget.value)}
-          onBlur={saveText}
+          onBlur={() => void saveText()}
           onKeyDown={(event) => {
             if (event.key === "Enter") event.currentTarget.blur();
             if (event.key === "Escape") {
@@ -156,7 +247,7 @@ function TaskRow({
         />
         {task.frog && <span class="badge" title="Frog task">frog</span>}
         {current && !task.frog && <span class="badge" title="Current focus">current</span>}
-        {task.schedule.date && <time class="date" dateTime={task.schedule.date}>{task.schedule.date}</time>}
+        {(task.schedule.date || task.schedule.month) && <time class="date" dateTime={task.schedule.date ?? task.schedule.month ?? undefined}>{task.schedule.date ?? task.schedule.month}</time>}
         <button class="icon-button" aria-label={`Details for ${task.text}`} aria-expanded={expanded} onClick={onExpand}>•••</button>
       </div>
       {expanded && (
@@ -164,10 +255,16 @@ function TaskRow({
           <label class="wide">
             Note
             <textarea
-              value={task.note}
+              value={note}
+              disabled={task.encryption !== null && !encryptionUnlocked}
               rows={2}
+              onInput={(event) => setNote(event.currentTarget.value)}
               onBlur={(event) => {
-                if (event.currentTarget.value !== task.note) void queueCommand(task.id, "update", { note: event.currentTarget.value });
+                if (!task.encryption && event.currentTarget.value !== task.note) void queueCommand(task.id, "update", { note: event.currentTarget.value });
+                if (task.encryption && encryptionPassphrase.value) {
+                  void encryptTaskFields(text, event.currentTarget.value, encryptionPassphrase.value)
+                    .then((fields) => queueCommand(task.id, "update", fields));
+                }
               }}
             />
           </label>
@@ -178,40 +275,68 @@ function TaskRow({
               value={task.schedule.date ?? ""}
               onInput={(event) =>
                 void queueCommand(task.id, "update", {
-                  schedule: { ...task.schedule, date: event.currentTarget.value || null }
+                  schedule: {
+                    ...task.schedule,
+                    month: event.currentTarget.value ? event.currentTarget.value.slice(0, 7) : task.schedule.month,
+                    date: event.currentTarget.value || null
+                  }
                 })
               }
             />
           </label>
           <label>
-            Repeat
-            <select
-              value={task.repeat?.cadence ?? "none"}
+            Planning month
+            <input
+              type="month"
+              value={task.schedule.month ?? ""}
               onInput={(event) => {
-                const cadence = event.currentTarget.value;
+                const month = event.currentTarget.value || null;
                 void queueCommand(task.id, "update", {
-                  repeat: cadence === "none" ? null : { cadence: cadence as "daily" | "weekly" | "monthly", interval: 1 }
+                  schedule: { ...task.schedule, month, date: month === today().slice(0, 7) ? today() : null }
                 });
               }}
-            >
-              <option value="none">Never</option>
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
+            />
           </label>
           <label>
-            Tags / epic
+            <input
+              type="checkbox"
+              checked={task.repetitive}
+              onInput={(event) => void queueCommand(task.id, "update", { repetitive: event.currentTarget.checked })}
+            />
+            Repetitive (copy or break down consciously)
+          </label>
+          <label>
+            Tags
             <input defaultValue={task.tags.join(", ")} onBlur={(event) => setTags(event.currentTarget.value)} />
+          </label>
+          <label>
+            Epic
+            <input value={task.epicId ?? ""} placeholder="Epic name" onInput={(event) => void queueCommand(task.id, "update", { epicId: event.currentTarget.value || null })} />
+          </label>
+          <label class="wide">
+            Break down into subtasks (one per line)
+            <textarea value={breakdown} rows={2} onInput={(event) => setBreakdown(event.currentTarget.value)} />
+            <button disabled={!breakdown.trim()} onClick={() => void breakDown()}>Create subtasks and complete parent</button>
+          </label>
+          <label class="wide">
+            Delegate to an existing account
+            <span class="inline-fields"><input type="email" value={delegateEmail} placeholder="person@example.com" onInput={(event) => setDelegateEmail(event.currentTarget.value)} /><button disabled={!delegateEmail} onClick={() => void delegate()}>Delegate</button></span>
           </label>
           <div class="detail-actions wide">
             <button onClick={() => void queueCommand(task.id, "update", { frog: !task.frog })}>{task.frog ? "Unmark frog" : "Mark frog"}</button>
-            <button onClick={() => void queueCommand(task.id, "skip", {}, { skipDate: task.schedule.date ?? today() })}>Skip occurrence</button>
+            {!task.encryption && <button disabled={encryptionPassphrase.value.length < 12} title={encryptionPassphrase.value.length < 12 ? "Set an encryption key in Settings first" : undefined} onClick={() => void encryptTaskFields(text, note, encryptionPassphrase.value).then((fields) => queueCommand(task.id, "update", fields))}>Encrypt task</button>}
+            {task.repetitive && <button onClick={() => void copyTask()}>Copy occurrence</button>}
+            <button disabled={task.frog} title={task.frog ? "Frogs cannot be skipped" : undefined} onClick={() => void queueCommand(task.id, "skip", {}, { skipDate: task.schedule.date ?? today() })}>Skip</button>
             <button aria-label="Move task up" disabled={index === 0} onClick={() => move(-1)}>↑</button>
             <button aria-label="Move task down" disabled={index === all.length - 1} onClick={() => move(1)}>↓</button>
             <button class="danger" onClick={() => void queueCommand(task.id, "delete")}>Delete</button>
           </div>
           <p class="meta wide">Revision {task.revision} · Owner {task.ownerId.slice(0, 8)} · {task.encryption ? `Encrypted (${task.encryption.algorithm})` : "Encryption ready"}</p>
+          {task.legacyDelegation && <p class="meta wide">Imported delegation · legacy delegator {task.legacyDelegation.delegatorId?.slice(0, 8)} · {task.legacyDelegation.accepted === true ? "accepted" : "pending"}</p>}
+          <div class="wide">
+            <button class="quiet" onClick={() => void api.request<{ events: SyncEvent[] }>(`/api/tasks/${task.id}/history`).then((value) => setHistory(value.events))}>{history ? "Refresh history" : "Load immutable history"}</button>
+            {history && <ol class="history">{history.map((event) => <li key={event.cursor}>Revision {event.task.revision}{event.conflict ? ` · conflict on ${event.conflict.fields.join(", ")}` : ""}</li>)}</ol>}
+          </div>
         </div>
       )}
     </li>
@@ -245,9 +370,27 @@ function ConflictPanel({ items }: { items: Conflict[] }) {
   );
 }
 
+function SyncErrorPanel() {
+  if (!syncErrors.value.length) return null;
+  return (
+    <aside class="conflicts" aria-label="Queued changes needing review">
+      <strong>Review {syncErrors.value.length} queued {syncErrors.value.length === 1 ? "change" : "changes"}</strong>
+      {syncErrors.value.map((operation) => (
+        <div key={operation.operationId}>
+          <span>{operation.error ?? "The server rejected this change."}</span>
+          <button onClick={() => void retryFailedOperation(operation.operationId)}>Retry</button>
+          <button onClick={() => void discardFailedOperation(operation.operationId)}>Discard this change</button>
+        </div>
+      ))}
+    </aside>
+  );
+}
+
 function SettingsPanel({ session, close }: { session: Session; close: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [run, setRun] = useState<ImportRun | null>(null);
+  const [legacyToken, setLegacyToken] = useState("");
+  const [passphrase, setPassphrase] = useState(encryptionPassphrase.value);
   useEffect(() => {
     dialog.current?.showModal();
     void api.request<{ run: ImportRun | null }>("/api/import").then((result) => setRun(result.run));
@@ -257,7 +400,11 @@ function SettingsPanel({ session, close }: { session: Session; close: () => void
     await api.request("/api/settings", { method: "PATCH", body: JSON.stringify({ theme }) });
   };
   const beginImport = async () => {
-    const created = await api.request<ImportRun>("/api/import", { method: "POST" });
+    const created = await api.request<ImportRun>("/api/import", {
+      method: "POST",
+      body: JSON.stringify({ legacyToken })
+    });
+    setLegacyToken("");
     setRun(created);
     const poll = window.setInterval(() => {
       void api.request<{ run: ImportRun | null }>("/api/import").then((result) => {
@@ -280,10 +427,16 @@ function SettingsPanel({ session, close }: { session: Session; close: () => void
         </select>
       </label>
       <section class="settings-section">
+        <h3>Encryption</h3>
+        <label>Local encryption key<input type="password" minlength={12} value={passphrase} placeholder="Not sent to the server" onInput={(event) => { setPassphrase(event.currentTarget.value); encryptionPassphrase.value = event.currentTarget.value; }} /></label>
+        <p class="meta">The key stays in this browser session. Losing it makes encrypted task text unrecoverable.</p>
+      </section>
+      <section class="settings-section">
         <h3>Data</h3>
         <div class="stack-actions">
           <a class="secondary button-link" href="/api/export" download>Export my data</a>
-          <button class="secondary" disabled={run?.status === "queued" || run?.status === "running"} onClick={() => void beginImport()}>Import from Todorant</button>
+          <label>Legacy access token<input type="password" autocomplete="off" value={legacyToken} onInput={(event) => setLegacyToken(event.currentTarget.value)} /></label>
+          <button class="secondary" disabled={legacyToken.length < 16 || run?.status === "queued" || run?.status === "running"} onClick={() => void beginImport()}>Verify and import from Todorant</button>
         </div>
         {run && <p class="import-status" role="status">Import {run.status}{run.status === "complete" ? ` · ${Object.values(run.counts).reduce((sum, count) => sum + count, 0)} records` : ""}{run.errors[0] ? ` · ${run.errors[0]}` : ""}</p>}
       </section>
@@ -291,30 +444,104 @@ function SettingsPanel({ session, close }: { session: Session; close: () => void
   );
 }
 
-function Workspace({ session, logout }: { session: Session; logout: () => void }) {
-  const [filter, setFilter] = useState<"today" | "planning" | "all" | "trash">("today");
+type TaskView = "current" | "today" | "planning" | "all" | "epics" | "reports" | "trash";
+
+function ReportPanel({ all }: { all: Task[] }) {
+  const [shareUrl, setShareUrl] = useState("");
+  const completed = all.filter((task) => task.completedAt && !task.deletedAt);
+  const byDate = new Map<string, { tasks: number; frogs: number }>();
+  for (const task of completed) {
+    const date = task.schedule.date ?? task.completedAt?.slice(0, 10) ?? "Unscheduled";
+    const value = byDate.get(date) ?? { tasks: 0, frogs: 0 };
+    value.tasks += 1;
+    if (task.frog) value.frogs += 1;
+    byDate.set(date, value);
+  }
+  return (
+    <section class="report" aria-label="Completion report">
+      <p><strong>{completed.length}</strong> completed · <strong>{completed.filter((task) => task.frog).length}</strong> frogs</p>
+      <button onClick={() => void api.request<{ id: string }>("/api/report/share", { method: "POST" }).then((value) => setShareUrl(`${location.origin}/api/report/public/${value.id}`))}>Create public aggregate report</button>
+      {shareUrl && <p><a href={shareUrl} target="_blank" rel="noreferrer">{shareUrl}</a></p>}
+      <ul>{[...byDate].sort(([a], [b]) => b.localeCompare(a)).map(([date, value]) => <li key={date}><time>{date}</time><span>{value.tasks} tasks · {value.frogs} frogs</span></li>)}</ul>
+    </section>
+  );
+}
+
+function EpicSummary({ all, settings }: { all: Task[]; settings: Record<string, unknown> }) {
+  const [goals, setGoals] = useState<Record<string, number>>(
+    settings.epicGoals && typeof settings.epicGoals === "object"
+      ? (settings.epicGoals as Record<string, number>)
+      : {}
+  );
+  const epics = new Map<string, { completed: number; total: number }>();
+  for (const task of all.filter((item) => item.epicId && !item.deletedAt)) {
+    const value = epics.get(task.epicId as string) ?? { completed: 0, total: 0 };
+    value.total += 1;
+    if (task.completedAt) value.completed += 1;
+    epics.set(task.epicId as string, value);
+  }
+  const setGoal = async (epic: string, goal: number) => {
+    const next = { ...goals, [epic]: Math.max(1, goal) };
+    setGoals(next);
+    await api.request("/api/settings", { method: "PATCH", body: JSON.stringify({ epicGoals: next }) });
+  };
+  return <section class="report" aria-label="Epic progress"><ul>{[...epics].map(([epic, value]) => <li key={epic}><strong>{epic}</strong><span>{value.completed} / <input aria-label={`Goal for ${epic}`} type="number" min={1} value={goals[epic] ?? value.total} onInput={(event) => void setGoal(epic, Number(event.currentTarget.value))} /> completed</span></li>)}</ul></section>;
+}
+
+export function Workspace({ session, logout }: { session: Session; logout: () => void }) {
+  const [filter, setFilter] = useState<TaskView>("current");
+  const [search, setSearch] = useState("");
   const [rulesOpen, setRulesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const planningRequired = orderedTasks.value.some(
+    (task) => !task.deletedAt && !task.completedAt && task.schedule.date !== null && task.schedule.date < today()
+  );
   const list = useMemo(() => {
     const visible = orderedTasks.value.filter((task) => (filter === "trash" ? task.deletedAt : !task.deletedAt));
+    const matching = search.trim()
+      ? visible.filter((task) => `${task.text} ${task.note} ${task.tags.join(" ")} ${task.epicId ?? ""}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
+      : visible;
+    if (filter === "current") {
+      if (planningRequired) return [];
+      return matching
+        .filter((task) => !task.completedAt && (!task.schedule.date || task.schedule.date <= today()))
+        .sort((a, b) => Number(b.frog) - Number(a.frog) || compareRanks(a.rank, b.rank))
+        .slice(0, 1);
+    }
     if (filter === "today") {
-      return visible
+      return matching
         .filter((task) => !task.schedule.date || task.schedule.date <= today())
         .sort((a, b) => Number(b.frog) - Number(a.frog) || Number(Boolean(a.completedAt)) - Number(Boolean(b.completedAt)));
     }
-    if (filter === "planning") return visible.filter((task) => task.schedule.date);
-    return visible;
-  }, [orderedTasks.value, filter]);
+    if (filter === "planning") {
+      return matching
+        .filter((task) => !task.completedAt && (task.schedule.month !== null || task.schedule.date !== null))
+        .sort((a, b) => {
+          const left = a.schedule.date ?? `${a.schedule.month ?? "9999-99"}-99`;
+          const right = b.schedule.date ?? `${b.schedule.month ?? "9999-99"}-99`;
+          return left.localeCompare(right) || compareRanks(a.rank, b.rank);
+        });
+    }
+    if (filter === "epics") return matching.filter((task) => task.epicId);
+    return matching;
+  }, [orderedTasks.value, filter, search, planningRequired]);
 
-  const create = (event: Event) => {
+  const create = async (event: Event) => {
     event.preventDefault();
     const form = event.currentTarget as HTMLFormElement;
     const input = form.elements.namedItem("task") as HTMLInputElement;
     const text = input.value.trim();
     if (!text) return;
     input.value = "";
-    void queueCommand(crypto.randomUUID(), "create", { text });
+    const date = today();
+    const protectedFields = encryptionPassphrase.value.length >= 12
+      ? await encryptTaskFields(text, "", encryptionPassphrase.value)
+      : { text };
+    await queueCommand(crypto.randomUUID(), "create", {
+      ...protectedFields,
+      schedule: { month: date.slice(0, 7), date, time: null, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
+    });
   };
 
   return (
@@ -322,7 +549,7 @@ function Workspace({ session, logout }: { session: Session; logout: () => void }
       <header class="topbar">
         <button class="wordmark wordmark-button" onClick={() => setFilter("today")}>todorant</button>
         <nav aria-label="Task views">
-          {(["today", "planning", "all", "trash"] as const).map((view) => (
+          {(["current", "today", "planning", "all", "epics", "reports", "trash"] as const).map((view) => (
             <button class={filter === view ? "active" : ""} aria-current={filter === view ? "page" : undefined} onClick={() => setFilter(view)}>{view[0]?.toUpperCase()}{view.slice(1)}</button>
           ))}
         </nav>
@@ -334,14 +561,17 @@ function Workspace({ session, logout }: { session: Session; logout: () => void }
       </header>
       <main class="workspace">
         <div class="list-header"><div><span class="eyebrow">{filter === "planning" ? "Calendar" : "Tasks"}</span><h1>{filter[0]?.toUpperCase()}{filter.slice(1)}</h1></div><span class="count">{list.length}</span></div>
+        <input class="search" type="search" value={search} placeholder="Search tasks, notes, tags, and epics" aria-label="Search tasks" onInput={(event) => setSearch(event.currentTarget.value)} />
         {filter !== "trash" && (
-          <form class="quick-add" onSubmit={create}>
+          <form class="quick-add" onSubmit={(event) => void create(event)}>
             <input name="task" aria-label="New task" placeholder="Add a task and press Enter" autocomplete="off" />
             <button class="primary" type="submit">Add</button>
           </form>
         )}
         <ConflictPanel items={conflicts.value} />
-        {list.length ? (
+        <SyncErrorPanel />
+        {filter === "epics" && <EpicSummary all={orderedTasks.value} settings={session.settings} />}
+        {filter === "reports" ? <ReportPanel all={orderedTasks.value} /> : list.length ? (
           <ul class="task-list">
             {list.map((task, index) =>
               filter === "trash" ? (
@@ -352,7 +582,7 @@ function Workspace({ session, logout }: { session: Session; logout: () => void }
             )}
           </ul>
         ) : (
-          <p class="empty">Nothing here. Your list has room to breathe.</p>
+          <p class="empty">{filter === "current" && planningRequired ? "Redistribute overdue work in Planning to unlock Current." : "Nothing here. Your list has room to breathe."}</p>
         )}
       </main>
       <footer><span>Local-first · revisioned history</span><button class="quiet" onClick={logout}>Log out</button></footer>

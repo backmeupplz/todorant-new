@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS "tasks" (
   "id" uuid NOT NULL,
   "user_id" uuid NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
   "revision" integer NOT NULL CHECK ("revision" > 0),
-  "rank" text NOT NULL,
+  "rank" text COLLATE "C" NOT NULL,
   "deleted" boolean NOT NULL DEFAULT false,
   "state" jsonb NOT NULL,
   "updated_at" timestamptz NOT NULL DEFAULT now(),

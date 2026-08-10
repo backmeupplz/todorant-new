@@ -1,6 +1,7 @@
-import type { TaskOperation } from "@todorant/domain";
+import { compareRanks, type TaskOperation } from "@todorant/domain";
 import { describe, expect, it } from "vitest";
 import { MemoryDataStore } from "./memory-store.js";
+import { applyOperation } from "./sync.js";
 
 const op = (
   operationId: string,
@@ -39,7 +40,7 @@ describe("multi-client synchronization", () => {
 
     const conflicted = await store.applyCommand("user-1", op("00000000-0000-4000-8000-000000000014", 1, { note: "Client B" }));
     expect(conflicted.task.note).toBe("Client A");
-    expect(conflicted.conflict?.mine).toEqual({ note: "Client B" });
+    expect(conflicted.conflict?.mine.changedFields).toEqual({ note: "Client B" });
   });
 
   it("replays a durable cursor after reconnect", async () => {
@@ -69,7 +70,7 @@ describe("multi-client synchronization", () => {
       tagChanges: { add: ["work", "focus"], remove: [] }
     });
     expect(tagged.task.tags).toEqual(["focus", "work"]);
-    expect(Number(tagged.task.rank)).toBeGreaterThan(0);
+    expect(tagged.task.rank.length).toBeGreaterThan(0);
   });
 
   it("assigns distinct stable tail ranks to new tasks", async () => {
@@ -82,7 +83,21 @@ describe("multi-client synchronization", () => {
       ...op("00000000-0000-4000-8000-000000000026", 0, { text: "Second" }, "create"),
       taskId: "00000000-0000-4000-8000-000000000002"
     });
-    expect(Number(second.task.rank)).toBeGreaterThan(Number(first.task.rank));
+    expect(compareRanks(second.task.rank, first.task.rank)).toBeGreaterThan(0);
+  });
+
+  it("preserves stale semantic intent instead of overwriting a newer semantic state", async () => {
+    const store = new MemoryDataStore();
+    await store.applyCommand("user-1", op("00000000-0000-4000-8000-000000000027", 0, { text: "Semantic" }, "create"));
+    await store.applyCommand("user-1", op("00000000-0000-4000-8000-000000000028", 1, {}, "complete"));
+    const staleReopen = await store.applyCommand(
+      "user-1",
+      op("00000000-0000-4000-8000-000000000029", 1, {}, "reopen")
+    );
+    expect(staleReopen.task.completedAt).not.toBeNull();
+    expect(staleReopen.conflict?.fields).toEqual(["completedAt"]);
+    expect(staleReopen.conflict?.mine.command).toBe("reopen");
+    expect((await store.history("user-1", staleReopen.task.id)).at(-1)?.conflict).toEqual(staleReopen.conflict);
   });
 
   it("keeps frogs at the front of deliberate work by rejecting skips", async () => {
@@ -97,5 +112,40 @@ describe("multi-client synchronization", () => {
         skipDate: "2026-08-09"
       })
     ).rejects.toThrow("Frog tasks cannot be skipped");
+  });
+
+  it("turns a task into a frog after two overdue redistributions", async () => {
+    const store = new MemoryDataStore();
+    const created = await store.applyCommand(
+      "user-1",
+      op("00000000-0000-4000-8000-000000000030", 0, {
+        text: "Avoided",
+        schedule: { month: "2026-01", date: "2026-01-01", time: null, timezone: "UTC" }
+      }, "create")
+    );
+    const first = applyOperation({
+      current: created.task,
+      operation: op("00000000-0000-4000-8000-000000000031", 1, {
+        schedule: { month: "2026-02", date: "2026-02-01", time: null, timezone: "UTC" }
+      }),
+      fieldsChangedAfterBase: [],
+      beforeRank: null,
+      afterRank: null,
+      now: "2026-01-02T09:00:00.000Z",
+      userId: "user-1"
+    }).task;
+    const second = applyOperation({
+      current: first,
+      operation: op("00000000-0000-4000-8000-000000000032", 2, {
+        schedule: { month: "2026-03", date: "2026-03-01", time: null, timezone: "UTC" }
+      }),
+      fieldsChangedAfterBase: [],
+      beforeRank: null,
+      afterRank: null,
+      now: "2026-02-02T09:00:00.000Z",
+      userId: "user-1"
+    }).task;
+    expect(first).toMatchObject({ frogFails: 1, frog: false });
+    expect(second).toMatchObject({ frogFails: 2, frog: true });
   });
 });

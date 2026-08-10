@@ -8,4 +8,4 @@ cmds = ["pnpm install --frozen-lockfile"]
 cmds = ["pnpm --filter @todorant/web build"]
 
 [start]
-cmd = "caddy file-server --root apps/web/dist --listen :8080"
+cmd = "caddy run --config apps/web/Caddyfile --adapter caddyfile"

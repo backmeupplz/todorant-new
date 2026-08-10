@@ -7,9 +7,9 @@ if (files.length === 0) throw new Error("No SQL migrations found");
 
 for (const file of files) {
   const sql = await readFile(resolve(directory, file), "utf8");
-  if (!sql.includes("CREATE TABLE") || /DROP\s+(TABLE|DATABASE)/iu.test(sql)) {
-    throw new Error(`${file} is empty or contains a destructive statement`);
+  if (!/\b(CREATE|ALTER)\s+(TABLE|INDEX)\b/iu.test(sql) || /DROP\s+(TABLE|DATABASE)/iu.test(sql)) {
+    throw new Error(`${file} has no schema changes or contains a destructive statement`);
   }
 }
 
-console.log(`Migration check passed (${files.length} immutable SQL file)`);
+console.log(`Migration check passed (${files.length} immutable SQL files)`);

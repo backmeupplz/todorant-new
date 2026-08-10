@@ -26,8 +26,9 @@ const defaults = (context: ApplyContext): Task => ({
   note: "",
   completedAt: null,
   deletedAt: null,
-  schedule: { date: null, time: null, timezone: null },
-  repeat: null,
+  schedule: { month: null, date: null, time: null, timezone: null },
+  repetitive: false,
+  frogFails: 0,
   skippedDates: [],
   tags: [],
   epicId: null,
@@ -35,7 +36,9 @@ const defaults = (context: ApplyContext): Task => ({
   rank: rankBetween(context.beforeRank, context.afterRank),
   ownerId: context.userId,
   delegateId: null,
+  legacyDelegation: null,
   encryption: null,
+  parentId: null,
   revision: 0,
   createdAt: context.now,
   updatedAt: context.now
@@ -43,6 +46,13 @@ const defaults = (context: ApplyContext): Task => ({
 
 export function applyOperation(context: ApplyContext): { task: Task; conflict: Conflict | null } {
   const { operation, now } = context;
+  if (
+    operation.deviceId !== "legacy-import" &&
+    operation.changedFields.schedule?.month === now.slice(0, 7) &&
+    !operation.changedFields.schedule.date
+  ) {
+    throw new Error("Tasks in the current month need a specific date");
+  }
   if (operation.command !== "create" && context.current === null) {
     throw new Error("Task not found");
   }
@@ -51,9 +61,10 @@ export function applyOperation(context: ApplyContext): { task: Task; conflict: C
   }
 
   const original = context.current ?? defaults(context);
-  const conflictingFields = Object.keys(operation.changedFields).filter((field) =>
+  const operationFields = touchedFields(operation);
+  const conflictingFields = operationFields.filter((field) =>
     context.fieldsChangedAfterBase.includes(field)
-  ) as MutableTaskField[];
+  );
 
   if (original.deletedAt !== null && !canApplyToTombstone(operation)) {
     const tombstoneFields = touchedFields(operation);
@@ -63,7 +74,7 @@ export function applyOperation(context: ApplyContext): { task: Task; conflict: C
       taskId: original.id,
       operationId: operation.operationId,
       fields: tombstoneFields,
-      mine: operation.changedFields,
+      mine: operation,
       canonical,
       createdAt: now
     };
@@ -79,32 +90,47 @@ export function applyOperation(context: ApplyContext): { task: Task; conflict: C
     revision: original.revision + 1,
     updatedAt: now
   };
+  if (
+    operation.deviceId !== "legacy-import" &&
+    operation.changedFields.schedule &&
+    original.completedAt === null &&
+    original.schedule.date &&
+    original.schedule.date <= now.slice(0, 10) &&
+    (next.schedule.date ?? `${next.schedule.month ?? "9999-99"}-99`) > original.schedule.date
+  ) {
+    next.frogFails = original.frogFails + 1;
+    if (next.frogFails >= 2) next.frog = true;
+  }
 
   switch (operation.command) {
     case "complete":
-      next.completedAt = now;
+      if (!conflictingFields.includes("completedAt")) next.completedAt = now;
       break;
     case "reopen":
-      next.completedAt = null;
+      if (!conflictingFields.includes("completedAt")) next.completedAt = null;
       break;
     case "skip":
       if (!operation.skipDate) throw new Error("skipDate is required");
       if (next.frog) throw new Error("Frog tasks cannot be skipped");
-      next.skippedDates = normalizeTags([...next.skippedDates, operation.skipDate]);
+      if (!conflictingFields.includes("skippedDates")) {
+        next.skippedDates = normalizeTags([...next.skippedDates, operation.skipDate]);
+      }
       break;
     case "delete":
-      next.deletedAt = now;
+      if (!conflictingFields.includes("deletedAt")) next.deletedAt = now;
       break;
     case "restore":
-      next.deletedAt = null;
+      if (!conflictingFields.includes("deletedAt")) next.deletedAt = null;
       break;
     case "reorder":
-      next.rank = rankBetween(context.beforeRank, context.afterRank);
+      if (!conflictingFields.includes("rank")) next.rank = rankBetween(context.beforeRank, context.afterRank);
       break;
     case "tags": {
-      const add = operation.tagChanges?.add ?? [];
-      const remove = new Set(operation.tagChanges?.remove ?? []);
-      next.tags = normalizeTags([...next.tags.filter((tag) => !remove.has(tag)), ...add]);
+      if (!conflictingFields.includes("tags")) {
+        const add = operation.tagChanges?.add ?? [];
+        const remove = new Set(operation.tagChanges?.remove ?? []);
+        next.tags = normalizeTags([...next.tags.filter((tag) => !remove.has(tag)), ...add]);
+      }
       break;
     }
     case "create":
@@ -118,11 +144,7 @@ export function applyOperation(context: ApplyContext): { task: Task; conflict: C
         taskId: next.id,
         operationId: operation.operationId,
         fields: conflictingFields,
-        mine: Object.fromEntries(
-          Object.entries(operation.changedFields).filter(([field]) =>
-            conflictingFields.includes(field as MutableTaskField)
-          )
-        ),
+        mine: operation,
         canonical: next,
         createdAt: now
       }

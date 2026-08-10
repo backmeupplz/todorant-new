@@ -4,7 +4,7 @@ import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
-import { normalizeEmail, type SyncEvent, type TaskOperation } from "@todorant/domain";
+import { normalizeEmail, type SyncEvent, type Task, type TaskOperation } from "@todorant/domain";
 import type { DataStore, ImportRun, SessionRecord } from "./store.js";
 
 const sessionCookie = "todorant_session";
@@ -24,7 +24,8 @@ declare module "fastify" {
 }
 
 export type ImportQueue = {
-  enqueue(run: ImportRun, email: string): Promise<void>;
+  verifyOwnership(email: string, legacyToken: string): Promise<string>;
+  enqueue(run: ImportRun, legacyUserId: string): Promise<void>;
 };
 
 export class EventHub {
@@ -88,7 +89,7 @@ const parseOperation = (body: unknown): TaskOperation | null => {
   ) return null;
 
   const source = value.changedFields as Record<string, unknown>;
-  const allowedFields = new Set(["text", "note", "frog", "epicId", "delegateId", "schedule", "repeat", "encryption"]);
+  const allowedFields = new Set(["text", "note", "frog", "epicId", "delegateId", "schedule", "repetitive", "encryption", "parentId"]);
   if (Object.keys(source).some((key) => !allowedFields.has(key))) return null;
   const changedFields: TaskOperation["changedFields"] = {};
   if (source.text !== undefined) {
@@ -103,6 +104,10 @@ const parseOperation = (body: unknown): TaskOperation | null => {
     if (typeof source.frog !== "boolean") return null;
     changedFields.frog = source.frog;
   }
+  if (source.repetitive !== undefined) {
+    if (typeof source.repetitive !== "boolean") return null;
+    changedFields.repetitive = source.repetitive;
+  }
   for (const key of ["epicId", "delegateId"] as const) {
     if (source[key] !== undefined) {
       if (source[key] !== null && (typeof source[key] !== "string" || String(source[key]).length > 128)) return null;
@@ -112,30 +117,20 @@ const parseOperation = (body: unknown): TaskOperation | null => {
   if (source.schedule !== undefined) {
     if (!source.schedule || typeof source.schedule !== "object") return null;
     const schedule = source.schedule as Record<string, unknown>;
-    if (![schedule.date, schedule.time, schedule.timezone].every((entry) => entry === null || typeof entry === "string")) return null;
+    if (![schedule.month, schedule.date, schedule.time, schedule.timezone].every((entry) => entry === null || typeof entry === "string")) return null;
+    if (schedule.month !== null && !/^\d{4}-\d{2}$/u.test(schedule.month as string)) return null;
+    if (schedule.date !== null && !/^\d{4}-\d{2}-\d{2}$/u.test(schedule.date as string)) return null;
+    if (schedule.time !== null && !/^\d{2}:\d{2}$/u.test(schedule.time as string)) return null;
     changedFields.schedule = {
+      month: schedule.month as string | null,
       date: schedule.date as string | null,
       time: schedule.time as string | null,
       timezone: schedule.timezone as string | null
     };
   }
-  if (source.repeat !== undefined) {
-    if (source.repeat === null) changedFields.repeat = null;
-    else {
-      if (!source.repeat || typeof source.repeat !== "object") return null;
-      const repeat = source.repeat as Record<string, unknown>;
-      if (
-        typeof repeat.cadence !== "string" ||
-        !["daily", "weekly", "monthly", "custom"].includes(repeat.cadence) ||
-        typeof repeat.interval !== "number" ||
-        !Number.isInteger(repeat.interval) ||
-        repeat.interval < 1
-      ) return null;
-      changedFields.repeat = {
-        cadence: repeat.cadence as "daily" | "weekly" | "monthly" | "custom",
-        interval: repeat.interval
-      };
-    }
+  if (source.parentId !== undefined) {
+    if (source.parentId !== null && (typeof source.parentId !== "string" || !uuidPattern.test(source.parentId))) return null;
+    changedFields.parentId = source.parentId as string | null;
   }
   if (source.encryption !== undefined) {
     if (source.encryption === null) changedFields.encryption = null;
@@ -154,7 +149,10 @@ const parseOperation = (body: unknown): TaskOperation | null => {
     baseRevision: value.baseRevision,
     command: value.command as TaskOperation["command"],
     changedFields,
-    clientTime: typeof value.clientTime === "string" ? value.clientTime : new Date().toISOString()
+    clientTime:
+      typeof value.clientTime === "string" && !Number.isNaN(Date.parse(value.clientTime))
+        ? new Date(value.clientTime).toISOString()
+        : new Date().toISOString()
   };
   if (value.skipDate !== undefined) {
     if (typeof value.skipDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(value.skipDate)) return null;
@@ -177,6 +175,18 @@ const parseOperation = (body: unknown): TaskOperation | null => {
   if (operation.command === "reorder" && !operation.ordering) return null;
   if (operation.command === "tags" && !operation.tagChanges) return null;
   return operation;
+};
+
+const reportFor = (tasks: Task[]) => {
+  const completedTodosMap: Record<string, number> = {};
+  const completedFrogsMap: Record<string, number> = {};
+  for (const task of tasks.filter((item) => item.completedAt && !item.deletedAt)) {
+    const date = task.schedule.date ?? task.completedAt?.slice(0, 10);
+    if (!date) continue;
+    completedTodosMap[date] = (completedTodosMap[date] ?? 0) + 1;
+    if (task.frog) completedFrogsMap[date] = (completedFrogsMap[date] ?? 0) + 1;
+  }
+  return { completedTodosMap, completedFrogsMap, generatedAt: new Date().toISOString() };
 };
 
 export async function buildApp(options: AppOptions) {
@@ -236,6 +246,17 @@ export async function buildApp(options: AppOptions) {
   };
 
   app.get("/api/health", async () => ({ ok: true }));
+
+  app.get(
+    "/api/report/public/:reportId",
+    { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const { reportId } = request.params as { reportId: string };
+      if (!uuidPattern.test(reportId)) return reply.code(404).send({ error: "Report not found" });
+      const report = await options.store.publicReport(reportId);
+      return report ?? reply.code(404).send({ error: "Report not found" });
+    }
+  );
 
   app.post(
     "/api/auth/signup",
@@ -307,9 +328,31 @@ export async function buildApp(options: AppOptions) {
     return { events: await options.store.history(currentSession(request).user.id, taskId) };
   });
 
+  app.get("/api/report", { preHandler: [requireAuth] }, async (request) =>
+    reportFor((await options.store.snapshot(currentSession(request).user.id, 0)).tasks)
+  );
+
+  app.post("/api/report/share", { preHandler: [requireAuth, requireCsrf] }, async (request) => {
+    const userId = currentSession(request).user.id;
+    const data = reportFor((await options.store.snapshot(userId, 0)).tasks);
+    return { id: await options.store.createReport(userId, data) };
+  });
+
   app.get("/api/settings", { preHandler: [requireAuth] }, async (request) =>
     options.store.getSettings(currentSession(request).user.id)
   );
+
+  app.post("/api/delegates/resolve", { preHandler: [requireAuth, requireCsrf] }, async (request, reply) => {
+    const rawEmail = request.body && typeof request.body === "object"
+      ? (request.body as Record<string, unknown>).email
+      : null;
+    const email = typeof rawEmail === "string" ? normalizeEmail(rawEmail) : "";
+    const delegate = email ? await options.store.findUserByEmail(email) : null;
+    if (!delegate || delegate.id === currentSession(request).user.id) {
+      return reply.code(404).send({ error: "That delegate account is not available" });
+    }
+    return { userId: delegate.id };
+  });
 
   app.patch("/api/settings", { preHandler: [requireAuth, requireCsrf] }, async (request, reply) => {
     if (!request.body || typeof request.body !== "object") return reply.code(400).send({ error: "Invalid settings" });
@@ -323,10 +366,23 @@ export async function buildApp(options: AppOptions) {
 
   app.post("/api/import", { preHandler: [requireAuth, requireCsrf] }, async (request, reply) => {
     const session = currentSession(request);
+    const legacyToken =
+      request.body && typeof request.body === "object"
+        ? (request.body as Record<string, unknown>).legacyToken
+        : null;
+    if (typeof legacyToken !== "string" || legacyToken.length < 16 || legacyToken.length > 512) {
+      return reply.code(400).send({ error: "Your legacy Todorant access token is required" });
+    }
     const latest = await options.store.latestImportRun(session.user.id);
     if (latest?.status === "queued" || latest?.status === "running") return reply.code(409).send(latest);
+    let legacyUserId: string;
+    try {
+      legacyUserId = await options.importQueue.verifyOwnership(session.user.email, legacyToken);
+    } catch {
+      return reply.code(403).send({ error: "Legacy account ownership could not be verified" });
+    }
     const run = await options.store.createImportRun(session.user.id, latest?.status === "failed" ? latest.id : null);
-    await options.importQueue.enqueue(run, session.user.email);
+    await options.importQueue.enqueue(run, legacyUserId);
     return reply.code(202).send(run);
   });
 
@@ -357,14 +413,20 @@ export async function buildApp(options: AppOptions) {
         if (ready) send(event);
         else buffered.push(event);
       });
-      void options.store.snapshot(session.user.id, cursor).then((snapshot) => {
-        for (const event of snapshot.events) send(event);
-        for (const event of buffered.filter((event) => event.cursor > snapshot.cursor).sort((a, b) => a.cursor - b.cursor)) send(event);
-        ready = true;
-        if (!closed && socket.readyState === socket.OPEN) {
-          socket.send(JSON.stringify({ type: "ready", cursor: snapshot.cursor }));
-        }
-      });
+      void options.store
+        .snapshot(session.user.id, cursor)
+        .then((snapshot) => {
+          for (const event of snapshot.events) send(event);
+          const replay = buffered
+            .filter((event) => event.cursor > snapshot.cursor)
+            .sort((a, b) => a.cursor - b.cursor);
+          for (const event of replay) send(event);
+          ready = true;
+          if (!closed && socket.readyState === socket.OPEN) {
+            socket.send(JSON.stringify({ type: "ready", cursor: replay.at(-1)?.cursor ?? snapshot.cursor }));
+          }
+        })
+        .catch(() => socket.close(1011, "Snapshot unavailable"));
       socket.on("close", () => {
         closed = true;
         unsubscribe();

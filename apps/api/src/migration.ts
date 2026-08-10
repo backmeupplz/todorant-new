@@ -1,16 +1,18 @@
 import { createHash } from "node:crypto";
-import { MongoClient, type Document } from "mongodb";
-import type { RepeatRule, TaskOperation, TaskSchedule } from "@todorant/domain";
+import { MongoClient, ObjectId, type Document } from "mongodb";
+import type { TaskOperation, TaskSchedule } from "@todorant/domain";
 import type { DataStore, ImportRun, LegacyRecord } from "./store.js";
 
 const kinds = ["users", "settings", "tasks", "tags", "epics", "delegation", "history"] as const;
 type LegacyKind = (typeof kinds)[number];
+type LegacyDataset = Record<LegacyKind, Record<string, unknown>[]>;
 
 export interface LegacyReader {
-  read(email: string): Promise<Record<LegacyKind, Record<string, unknown>[]>>;
+  verifyOwnership(email: string, legacyToken: string): Promise<string>;
+  read(legacyUserId: string): Promise<LegacyDataset>;
 }
 
-const emptyRecords = (): Record<LegacyKind, Record<string, unknown>[]> => ({
+const emptyRecords = (): LegacyDataset => ({
   users: [],
   settings: [],
   tasks: [],
@@ -19,6 +21,75 @@ const emptyRecords = (): Record<LegacyKind, Record<string, unknown>[]> => ({
   delegation: [],
   history: []
 });
+
+const plain = (document: Document): Record<string, unknown> =>
+  JSON.parse(JSON.stringify(document)) as Record<string, unknown>;
+
+const allowlist = (source: Record<string, unknown>, fields: readonly string[]) =>
+  Object.fromEntries(fields.filter((field) => source[field] !== undefined).map((field) => [field, source[field]]));
+
+const userFields = ["_id", "name", "timezone", "telegramZen", "telegramLanguage", "createdAt", "updatedAt"] as const;
+const settingFields = [
+  "removeCompletedFromCalendar",
+  "showTodayOnAddTodo",
+  "firstDayOfWeek",
+  "startTimeOfDay",
+  "newTodosGoFirst",
+  "preserveOrderByTime",
+  "duplicateTagInBreakdown",
+  "showMoreByDefault",
+  "language",
+  "updatedAt"
+] as const;
+const taskFields = [
+  "_id",
+  "clientId",
+  "user",
+  "delegator",
+  "delegateAccepted",
+  "text",
+  "completed",
+  "frog",
+  "repetitive",
+  "frogFails",
+  "skipped",
+  "order",
+  "deleted",
+  "encrypted",
+  "monthAndYear",
+  "date",
+  "time",
+  "createdAt",
+  "updatedAt"
+] as const;
+const tagFields = [
+  "_id",
+  "clientId",
+  "tag",
+  "color",
+  "deleted",
+  "epic",
+  "epicCompleted",
+  "epicGoal",
+  "epicOrder",
+  "numberOfUses",
+  "createdAt",
+  "updatedAt"
+] as const;
+
+const allowedReadActions = new Set([
+  "changeStream",
+  "collStats",
+  "dbHash",
+  "dbStats",
+  "find",
+  "killCursors",
+  "listCollections",
+  "listDatabases",
+  "listIndexes",
+  "listSearchIndexes",
+  "planCacheRead"
+]);
 
 export class MongoLegacyReader implements LegacyReader {
   constructor(
@@ -35,32 +106,94 @@ export class MongoLegacyReader implements LegacyReader {
     }
   }
 
-  async read(email: string): Promise<Record<LegacyKind, Record<string, unknown>[]>> {
+  async verifyOwnership(email: string, legacyToken: string): Promise<string> {
+    return this.withReadOnlyClient(async (client) => {
+      const user = await client.db(this.database).collection("users").findOne(
+        { email, token: legacyToken },
+        { projection: { _id: 1 } }
+      );
+      if (!user) throw new Error("Legacy ownership proof did not match");
+      return String(user._id);
+    });
+  }
+
+  async read(legacyUserId: string): Promise<LegacyDataset> {
+    return this.withReadOnlyClient(async (client) => {
+      const database = client.db(this.database);
+      if (!/^[0-9a-f]{24}$/iu.test(legacyUserId)) throw new Error("Invalid verified legacy account id");
+      const id = new ObjectId(legacyUserId);
+      const legacyUser = await database.collection("users").findOne({ _id: id });
+      if (!legacyUser) throw new Error("Verified legacy account no longer exists");
+
+      const [todos, tags, reports] = await Promise.all([
+        database
+          .collection("todos")
+          .find({ $or: [{ user: id }, { delegator: id }] })
+          .sort({ order: 1, _id: 1 })
+          .toArray(),
+        database.collection("tags").find({ user: id }).sort({ epicOrder: 1, _id: 1 }).toArray(),
+        database.collection("reports").find({ user: id }).sort({ _id: 1 }).toArray()
+      ]);
+
+      const sourceUser = plain(legacyUser);
+      const records = emptyRecords();
+      records.users = [allowlist(sourceUser, userFields)];
+      records.settings = [
+        {
+          _id: `${legacyUserId}:settings`,
+          ...allowlist(
+            sourceUser.settings && typeof sourceUser.settings === "object"
+              ? (sourceUser.settings as Record<string, unknown>)
+              : {},
+            settingFields
+          )
+        }
+      ];
+      records.tasks = todos.map((todo) => allowlist(plain(todo), taskFields));
+      const safeTags = tags.map((tag) => allowlist(plain(tag), tagFields));
+      records.tags = safeTags.filter((tag) => tag.epic !== true);
+      records.epics = safeTags.filter((tag) => tag.epic === true);
+      records.delegation = [
+        {
+          _id: `${legacyUserId}:delegation`,
+          delegates: Array.isArray(sourceUser.delegates) ? sourceUser.delegates.map(String) : [],
+          delegatesUpdatedAt: sourceUser.delegatesUpdatedAt ?? null
+        }
+      ];
+      records.history = reports.map((report) => {
+        const source = plain(report);
+        return allowlist(source, ["_id", "uuid", "meta", "hash", "createdAt", "updatedAt"]);
+      });
+      return records;
+    });
+  }
+
+  private async withReadOnlyClient<T>(callback: (client: MongoClient) => Promise<T>): Promise<T> {
     const client = new MongoClient(this.url, {
       appName: "todorant-vnext-read-only-import",
-      directConnection: false
+      directConnection: false,
+      readConcern: { level: "majority" }
     });
     try {
       await client.connect();
-      const database = client.db(this.database);
-      const legacyUsers = await database.collection("users").find({ email }).limit(1).toArray();
-      const legacyUser = legacyUsers[0];
-      if (!legacyUser) return emptyRecords();
-      const legacyUserId = legacyUser._id;
-      const records = emptyRecords();
-      records.users = [plain(legacyUser)];
-      for (const kind of kinds.filter((kind) => kind !== "users")) {
-        records[kind] = (await database.collection(kind).find({ userId: legacyUserId }).toArray()).map(plain);
+      const status = await client.db(this.database).command({ connectionStatus: 1, showPrivileges: true });
+      const roles = status.authInfo?.authenticatedUserRoles as Array<{ role?: string }> | undefined;
+      const privileges = status.authInfo?.authenticatedUserPrivileges as Array<{ actions?: string[] }> | undefined;
+      if (!roles?.length || !privileges?.length) {
+        throw new Error("Legacy Mongo credentials must expose verifiable read-only privileges");
       }
-      return records;
+      const disallowedActions = [
+        ...new Set(privileges.flatMap((privilege) => privilege.actions ?? []).filter((action) => !allowedReadActions.has(action)))
+      ];
+      if (disallowedActions.length) {
+        throw new Error(`Legacy Mongo credentials include non-read privileges: ${disallowedActions.join(", ")}`);
+      }
+      return await callback(client);
     } finally {
       await client.close();
     }
   }
 }
-
-const plain = (document: Document): Record<string, unknown> =>
-  JSON.parse(JSON.stringify(document)) as Record<string, unknown>;
 
 const stable = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
@@ -76,7 +209,7 @@ const stable = (value: unknown): string => {
 
 const digest = (value: unknown): string => createHash("sha256").update(stable(value)).digest("hex");
 
-const stableUuid = (value: string): string => {
+export const stableUuid = (value: string): string => {
   const bytes = Buffer.from(digest(value).slice(0, 32), "hex");
   bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
   bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
@@ -86,17 +219,48 @@ const stableUuid = (value: string): string => {
 
 const legacyId = (record: Record<string, unknown>): string => String(record._id ?? record.id ?? digest(record));
 
+const legacyMonth = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  if (/^\d{4}-\d{2}$/u.test(value)) return value;
+  const old = /^(\d{2})-(\d{4})$/u.exec(value);
+  return old ? `${old[2]}-${old[1]}` : null;
+};
+
+const legacySchedule = (payload: Record<string, unknown>): TaskSchedule => {
+  const month = legacyMonth(payload.monthAndYear);
+  const day = typeof payload.date === "string" && /^\d{2}$/u.test(payload.date) ? payload.date : null;
+  return {
+    month,
+    date: month && day ? `${month}-${day}` : null,
+    time: typeof payload.time === "string" ? payload.time : null,
+    timezone: null
+  };
+};
+
+const tagsFromText = (text: string): string[] =>
+  [...text.matchAll(/(?:^|\s)#([\p{L}\p{N}_-]+)/gu)].map((match) => match[1] as string);
+
 export class MigrationService {
   constructor(
     private readonly store: DataStore,
     private readonly reader: LegacyReader
   ) {}
 
-  async run(run: ImportRun, email: string): Promise<ImportRun> {
-    const active: ImportRun = { ...run, status: "running" };
+  async run(run: ImportRun, legacyUserId: string): Promise<ImportRun> {
+    const active: ImportRun = { ...run, counts: { ...run.counts }, errors: [...run.errors], status: "running" };
     await this.store.updateImportRun(active);
     try {
-      const source = await this.reader.read(email);
+      const source = await this.reader.read(legacyUserId);
+      const epics = new Map(
+        source.epics
+          .filter((epic) => typeof epic.tag === "string")
+          .map((epic) => [String(epic.tag).toLocaleLowerCase(), stableUuid(`epics:${legacyId(epic)}`)])
+      );
+      const epicGoals = Object.fromEntries(
+        source.epics
+          .filter((epic) => typeof epic.tag === "string" && typeof epic.epicGoal === "number")
+          .map((epic) => [String(epic.tag), Number(epic.epicGoal)])
+      );
       for (const kind of kinds) {
         let imported = 0;
         for (const payload of source[kind]) {
@@ -111,10 +275,19 @@ export class MigrationService {
           };
           const changed = await this.store.upsertLegacyRecord(run.userId, record);
           if (changed) imported += 1;
-          if (kind === "tasks") await this.importTask(run.userId, record);
-          if (kind === "settings" && changed) await this.store.setSettings(run.userId, payload);
+          if (kind === "tasks") await this.importTask(run.userId, record, epics);
+          if (kind === "settings" && changed) {
+            const settings = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== "_id"));
+            await this.store.setSettings(run.userId, settings);
+          }
         }
         active.counts[kind] = imported;
+      }
+      if (Object.keys(epicGoals).length) {
+        const currentSettings = await this.store.getSettings(run.userId);
+        await this.store.setSettings(run.userId, {
+          epicGoals: { ...(currentSettings.epicGoals as Record<string, number> | undefined), ...epicGoals }
+        });
       }
       active.status = "complete";
     } catch (error) {
@@ -126,29 +299,37 @@ export class MigrationService {
     return active;
   }
 
-  private async importTask(userId: string, record: LegacyRecord): Promise<void> {
+  private async importTask(
+    userId: string,
+    record: LegacyRecord,
+    epics: Map<string, string>
+  ): Promise<void> {
     const snapshot = await this.store.snapshot(userId, 0);
     const current = snapshot.tasks.find((task) => task.id === record.importedId);
     const payload = record.payload;
-    const legacyFrog = Boolean(payload.frog);
+    const text = String(payload.text ?? "Imported task");
+    const tags = payload.encrypted === true ? [] : tagsFromText(text);
+    const epicId = tags.map((tag) => epics.get(tag.toLocaleLowerCase())).find(Boolean) ?? null;
+    const schedule = legacySchedule(payload);
     const changedFields: TaskOperation["changedFields"] = {
-      text: String(payload.text ?? payload.title ?? "Imported task"),
-      note: String(payload.note ?? payload.description ?? ""),
-      frog: false,
-      epicId: payload.epicId ? String(payload.epicId) : null,
-      delegateId: payload.delegateId ? String(payload.delegateId) : null,
-      repeat:
-        payload.repeat && typeof payload.repeat === "object"
-          ? (payload.repeat as RepeatRule)
-          : null,
-      schedule:
-        payload.schedule && typeof payload.schedule === "object"
-          ? (payload.schedule as TaskSchedule)
-          : { date: null, time: null, timezone: null },
-      encryption:
-        payload.encryption && typeof payload.encryption === "object"
-          ? (payload.encryption as { algorithm: string; keyId: string })
-          : null
+      text,
+      note: "",
+      frog: Boolean(payload.frog),
+      frogFails: Number.isInteger(payload.frogFails) ? Number(payload.frogFails) : 0,
+      repetitive: Boolean(payload.repetitive),
+      epicId,
+      delegateId: null,
+      legacyDelegation: payload.delegator
+        ? {
+            userId: String(payload.user),
+            delegatorId: String(payload.delegator),
+            accepted: typeof payload.delegateAccepted === "boolean" ? payload.delegateAccepted : null
+          }
+        : null,
+      schedule,
+      skippedDates: payload.skipped === true ? [schedule.date ?? String(payload.updatedAt ?? "legacy-skip")] : [],
+      encryption: payload.encrypted === true ? { algorithm: "legacy-aes", keyId: "legacy-password" } : null,
+      parentId: null
     };
     let result = await this.store.applyCommand(userId, {
       operationId: stableUuid(`${userId}:${record.legacyId}:${record.checksum}`),
@@ -159,8 +340,7 @@ export class MigrationService {
       changedFields,
       clientTime: new Date().toISOString()
     });
-    const rawTags = Array.isArray(payload.tags) ? payload.tags.filter((tag): tag is string => typeof tag === "string") : [];
-    if (rawTags.length) {
+    if (tags.length) {
       result = await this.store.applyCommand(userId, {
         operationId: stableUuid(`${userId}:${record.legacyId}:${record.checksum}:tags`),
         taskId: record.importedId,
@@ -168,37 +348,11 @@ export class MigrationService {
         baseRevision: result.task.revision,
         command: "tags",
         changedFields: {},
-        tagChanges: { add: rawTags, remove: [] },
+        tagChanges: { add: tags, remove: [] },
         clientTime: new Date().toISOString()
       });
     }
-    const rawSkips = Array.isArray(payload.skippedDates)
-      ? payload.skippedDates.filter((date): date is string => typeof date === "string")
-      : [];
-    for (const skipDate of rawSkips) {
-      result = await this.store.applyCommand(userId, {
-        operationId: stableUuid(`${userId}:${record.legacyId}:${record.checksum}:skip:${skipDate}`),
-        taskId: record.importedId,
-        deviceId: "legacy-import",
-        baseRevision: result.task.revision,
-        command: "skip",
-        changedFields: {},
-        skipDate,
-        clientTime: new Date().toISOString()
-      });
-    }
-    if (legacyFrog) {
-      result = await this.store.applyCommand(userId, {
-        operationId: stableUuid(`${userId}:${record.legacyId}:${record.checksum}:frog`),
-        taskId: record.importedId,
-        deviceId: "legacy-import",
-        baseRevision: result.task.revision,
-        command: "update",
-        changedFields: { frog: true },
-        clientTime: new Date().toISOString()
-      });
-    }
-    if (payload.completedAt || payload.completed === true) {
+    if (payload.completed === true && !result.task.completedAt) {
       result = await this.store.applyCommand(userId, {
         operationId: stableUuid(`${userId}:${record.legacyId}:${record.checksum}:complete`),
         taskId: record.importedId,
@@ -209,7 +363,7 @@ export class MigrationService {
         clientTime: new Date().toISOString()
       });
     }
-    if (payload.deletedAt || payload.deleted === true) {
+    if (payload.deleted === true && !result.task.deletedAt) {
       await this.store.applyCommand(userId, {
         operationId: stableUuid(`${userId}:${record.legacyId}:${record.checksum}:delete`),
         taskId: record.importedId,

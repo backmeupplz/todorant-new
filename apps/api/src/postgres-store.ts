@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, or, sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import type { CommandResult, SyncEvent, TaskOperation } from "@todorant/domain";
@@ -9,6 +9,7 @@ import type {
   EventPublisher,
   ImportRun,
   LegacyRecord,
+  ReportData,
   SessionRecord,
   UserRecord
 } from "./store.js";
@@ -55,16 +56,25 @@ export class PostgresDataStore implements DataStore {
 
   async snapshot(userId: string, afterCursor: number) {
     const [taskRows, eventRows, cursorRows] = await Promise.all([
-      this.db.select().from(schema.tasks).where(eq(schema.tasks.userId, userId)).orderBy(asc(schema.tasks.rank)),
+      this.db
+        .select()
+        .from(schema.tasks)
+        .where(or(eq(schema.tasks.userId, userId), eq(schema.tasks.delegateId, userId)))
+        .orderBy(asc(schema.tasks.rank)),
       this.db
         .select()
         .from(schema.taskEvents)
-        .where(and(eq(schema.taskEvents.userId, userId), gt(schema.taskEvents.cursor, afterCursor)))
+        .where(
+          and(
+            or(eq(schema.taskEvents.userId, userId), eq(schema.taskEvents.delegateId, userId)),
+            gt(schema.taskEvents.cursor, afterCursor)
+          )
+        )
         .orderBy(asc(schema.taskEvents.cursor)),
       this.db
         .select({ cursor: schema.taskEvents.cursor })
         .from(schema.taskEvents)
-        .where(eq(schema.taskEvents.userId, userId))
+        .where(or(eq(schema.taskEvents.userId, userId), eq(schema.taskEvents.delegateId, userId)))
         .orderBy(desc(schema.taskEvents.cursor))
         .limit(1)
     ]);
@@ -81,8 +91,8 @@ export class PostgresDataStore implements DataStore {
   }
 
   async applyCommand(userId: string, operation: TaskOperation): Promise<CommandResult> {
-    const result = await this.db.transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
+    const outcome = await this.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${operation.taskId}, 0))`);
       const [prior] = await tx
         .select()
         .from(schema.operations)
@@ -93,20 +103,36 @@ export class PostgresDataStore implements DataStore {
           )
         )
         .limit(1);
-      if (prior) return { ...prior.result, duplicate: true };
+      if (prior) {
+        return {
+          result: { ...prior.result, duplicate: true },
+          previousDelegateId: null
+        };
+      }
 
       const [taskRow] = await tx
         .select()
         .from(schema.tasks)
-        .where(and(eq(schema.tasks.userId, userId), eq(schema.tasks.id, operation.taskId)))
+        .where(
+          and(
+            eq(schema.tasks.id, operation.taskId),
+            or(eq(schema.tasks.userId, userId), eq(schema.tasks.delegateId, userId))
+          )
+        )
         .limit(1);
+      if (taskRow && operation.baseRevision > taskRow.revision) {
+        throw new Error("Base revision is ahead of the canonical task");
+      }
+      if (taskRow && taskRow.userId !== userId && operation.changedFields.delegateId !== undefined) {
+        throw new Error("Only the owner can change delegation");
+      }
       const laterEvents = taskRow
         ? await tx
             .select({ fields: schema.taskEvents.changedFields })
             .from(schema.taskEvents)
             .where(
               and(
-                eq(schema.taskEvents.userId, userId),
+                or(eq(schema.taskEvents.userId, userId), eq(schema.taskEvents.delegateId, userId)),
                 eq(schema.taskEvents.taskId, operation.taskId),
                 gt(schema.taskEvents.revision, operation.baseRevision)
               )
@@ -117,15 +143,17 @@ export class PostgresDataStore implements DataStore {
         const [row] = await tx
           .select({ rank: schema.tasks.rank })
           .from(schema.tasks)
-          .where(and(eq(schema.tasks.userId, userId), eq(schema.tasks.id, id)))
+          .where(
+            and(eq(schema.tasks.id, id), or(eq(schema.tasks.userId, userId), eq(schema.tasks.delegateId, userId)))
+          )
           .limit(1);
         return row?.rank ?? null;
       };
       const [tail] = await tx
         .select({ rank: schema.tasks.rank })
         .from(schema.tasks)
-        .where(eq(schema.tasks.userId, userId))
-        .orderBy(desc(sql`${schema.tasks.rank}::numeric`))
+        .where(or(eq(schema.tasks.userId, userId), eq(schema.tasks.delegateId, userId)))
+        .orderBy(desc(schema.tasks.rank))
         .limit(1);
       const { task, conflict } = applyOperation({
         current: taskRow?.state ?? null,
@@ -141,7 +169,8 @@ export class PostgresDataStore implements DataStore {
         .insert(schema.tasks)
         .values({
           id: task.id,
-          userId,
+          userId: task.userId,
+          delegateId: task.delegateId,
           revision: task.revision,
           rank: task.rank,
           deleted: task.deletedAt !== null,
@@ -152,6 +181,7 @@ export class PostgresDataStore implements DataStore {
           set: {
             revision: task.revision,
             rank: task.rank,
+            delegateId: task.delegateId,
             deleted: task.deletedAt !== null,
             state: task,
             updatedAt: new Date()
@@ -160,11 +190,12 @@ export class PostgresDataStore implements DataStore {
       const [event] = await tx
         .insert(schema.taskEvents)
         .values({
-          userId,
+          userId: task.userId,
+          delegateId: task.delegateId,
           taskId: task.id,
           revision: task.revision,
           operationId: operation.operationId,
-          changedFields: changedFieldsFor(operation),
+          changedFields: changedFieldsFor(operation).filter((field) => !conflict?.fields.includes(field)),
           state: task,
           conflict
         })
@@ -176,15 +207,27 @@ export class PostgresDataStore implements DataStore {
         userId,
         result: commandResult
       });
-      return commandResult;
+      return { result: commandResult, previousDelegateId: taskRow?.delegateId ?? null };
     });
+    const { result, previousDelegateId } = outcome;
     if (!result.duplicate) {
-      this.publish(userId, {
+      const event = {
         cursor: result.cursor,
         task: result.task,
         conflict: result.conflict,
         operationId: operation.operationId
-      });
+      };
+      this.publish(result.task.userId, event);
+      if (result.task.delegateId && result.task.delegateId !== result.task.userId) {
+        this.publish(result.task.delegateId, event);
+      }
+      if (
+        previousDelegateId &&
+        previousDelegateId !== result.task.delegateId &&
+        previousDelegateId !== result.task.userId
+      ) {
+        this.publish(previousDelegateId, event);
+      }
     }
     return result;
   }
@@ -193,7 +236,12 @@ export class PostgresDataStore implements DataStore {
     const rows = await this.db
       .select()
       .from(schema.taskEvents)
-      .where(and(eq(schema.taskEvents.userId, userId), eq(schema.taskEvents.taskId, taskId)))
+      .where(
+        and(
+          eq(schema.taskEvents.taskId, taskId),
+          or(eq(schema.taskEvents.userId, userId), eq(schema.taskEvents.delegateId, userId))
+        )
+      )
       .orderBy(asc(schema.taskEvents.cursor));
     return rows.map((row) => ({
       cursor: row.cursor,
@@ -201,6 +249,17 @@ export class PostgresDataStore implements DataStore {
       conflict: row.conflict ?? null,
       operationId: row.operationId
     }));
+  }
+
+  async createReport(userId: string, data: ReportData): Promise<string> {
+    const id = crypto.randomUUID();
+    await this.db.insert(schema.reports).values({ id, userId, data });
+    return id;
+  }
+
+  async publicReport(id: string): Promise<ReportData | null> {
+    const [report] = await this.db.select({ data: schema.reports.data }).from(schema.reports).where(eq(schema.reports.id, id)).limit(1);
+    return report?.data ?? null;
   }
 
   async getSettings(userId: string): Promise<Record<string, unknown>> {
@@ -278,13 +337,14 @@ export class PostgresDataStore implements DataStore {
   }
 
   async exportData(userId: string): Promise<Record<string, unknown>> {
-    const [snapshot, settings, legacy, runs] = await Promise.all([
+    const [snapshot, settings, legacy, runs, reports] = await Promise.all([
       this.snapshot(userId, 0),
       this.getSettings(userId),
       this.db.select().from(schema.legacyImports).where(eq(schema.legacyImports.userId, userId)),
-      this.db.select().from(schema.importRuns).where(eq(schema.importRuns.userId, userId))
+      this.db.select().from(schema.importRuns).where(eq(schema.importRuns.userId, userId)),
+      this.db.select().from(schema.reports).where(eq(schema.reports.userId, userId))
     ]);
-    return { version: 1, exportedAt: new Date().toISOString(), ...snapshot, settings, legacy, importRuns: runs };
+    return { version: 1, exportedAt: new Date().toISOString(), ...snapshot, settings, legacy, importRuns: runs, reports };
   }
 }
 

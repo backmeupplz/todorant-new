@@ -9,7 +9,10 @@ const appFixture = async () => {
     store,
     eventHub: hub,
     sessionPepper: "test-pepper-that-is-definitely-long-enough",
-    importQueue: { enqueue: async () => undefined }
+    importQueue: {
+      verifyOwnership: async () => "legacy-user",
+      enqueue: async () => undefined
+    }
   });
   return { app, store };
 };

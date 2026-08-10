@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canApplyToTombstone,
+  compareRanks,
   normalizeEmail,
   normalizeTags,
   rankBetween,
@@ -32,8 +33,11 @@ describe("sync protocol primitives", () => {
   });
 
   it("assigns sortable ranks from neighboring task ids", () => {
-    expect(Number(rankBetween("1024", "2048"))).toBeGreaterThan(1024);
-    expect(Number(rankBetween("1024", "2048"))).toBeLessThan(2048);
+    const low = rankBetween(null, null);
+    const high = rankBetween(low, null);
+    const middle = rankBetween(low, high);
+    expect(compareRanks(middle, low)).toBeGreaterThan(0);
+    expect(compareRanks(middle, high)).toBeLessThan(0);
   });
 
   it("never lets offline edits resurrect tombstones", () => {

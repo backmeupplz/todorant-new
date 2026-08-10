@@ -1,10 +1,11 @@
-import type { CommandResult, SyncEvent, Task, TaskOperation } from "@todorant/domain";
+import { compareRanks, type CommandResult, type SyncEvent, type Task, type TaskOperation } from "@todorant/domain";
 import { applyOperation, changedFieldsFor } from "./sync.js";
 import type {
   DataStore,
   EventPublisher,
   ImportRun,
   LegacyRecord,
+  ReportData,
   SessionRecord,
   UserRecord
 } from "./store.js";
@@ -17,6 +18,7 @@ export class MemoryDataStore implements DataStore {
   readonly operations = new Map<string, CommandResult>();
   readonly imports = new Map<string, ImportRun>();
   readonly legacy = new Map<string, LegacyRecord>();
+  readonly reports = new Map<string, { userId: string; data: ReportData }>();
 
   constructor(private readonly publish: EventPublisher = () => undefined) {}
 
@@ -49,8 +51,8 @@ export class MemoryDataStore implements DataStore {
   async snapshot(userId: string, afterCursor: number) {
     const events = this.events.filter((event) => event.cursor > afterCursor && event.task.userId === userId);
     const tasks = [...this.tasks.values()]
-      .filter((task) => task.userId === userId)
-      .sort((a, b) => Number(a.rank) - Number(b.rank));
+      .filter((task) => task.userId === userId || task.delegateId === userId)
+      .sort((a, b) => compareRanks(a.rank, b.rank));
     return { tasks, events, cursor: this.events.at(-1)?.cursor ?? 0 };
   }
 
@@ -59,12 +61,21 @@ export class MemoryDataStore implements DataStore {
     const duplicate = this.operations.get(operationKey);
     if (duplicate) return { ...duplicate, duplicate: true };
 
-    const taskKey = `${userId}:${operation.taskId}`;
-    const current = this.tasks.get(taskKey) ?? null;
+    const current = [...this.tasks.values()].find(
+      (task) => task.id === operation.taskId && (task.userId === userId || task.delegateId === userId)
+    ) ?? null;
+    const previousDelegateId = current?.delegateId ?? null;
+    const taskKey = `${current?.userId ?? userId}:${operation.taskId}`;
+    if (current && operation.baseRevision > current.revision) {
+      throw new Error("Base revision is ahead of the canonical task");
+    }
+    if (current && current.userId !== userId && operation.changedFields.delegateId !== undefined) {
+      throw new Error("Only the owner can change delegation");
+    }
     const laterFields = this.events
       .filter(
         (event) =>
-          event.task.userId === userId &&
+          (event.task.userId === userId || event.task.delegateId === userId) &&
           event.task.id === operation.taskId &&
           event.task.revision > operation.baseRevision
       )
@@ -73,11 +84,15 @@ export class MemoryDataStore implements DataStore {
         return stored ?? [];
       });
     const neighborRank = (id: string | null | undefined): string | null =>
-      id ? this.tasks.get(`${userId}:${id}`)?.rank ?? null : null;
+      id
+        ? [...this.tasks.values()].find(
+            (task) => task.id === id && (task.userId === userId || task.delegateId === userId)
+          )?.rank ?? null
+        : null;
     const tailRank = [...this.tasks.values()]
-      .filter((task) => task.userId === userId && task.id !== operation.taskId)
+      .filter((task) => (task.userId === userId || task.delegateId === userId) && task.id !== operation.taskId)
       .reduce<string | null>((maximum, task) =>
-        maximum === null || Number(task.rank) > Number(maximum) ? task.rank : maximum, null);
+        maximum === null || compareRanks(task.rank, maximum) > 0 ? task.rank : maximum, null);
     const { task, conflict } = applyOperation({
       current,
       operation,
@@ -93,17 +108,33 @@ export class MemoryDataStore implements DataStore {
       task,
       conflict,
       operationId: operation.operationId,
-      changedFields: changedFieldsFor(operation)
+      changedFields: changedFieldsFor(operation).filter((field) => !conflict?.fields.includes(field))
     } as SyncEvent & { changedFields: string[] };
     this.events.push(event);
     const result = { task, conflict, cursor: event.cursor, duplicate: false };
     this.operations.set(operationKey, result);
-    this.publish(userId, event);
+    this.publish(task.userId, event);
+    if (task.delegateId && task.delegateId !== task.userId) this.publish(task.delegateId, event);
+    if (previousDelegateId && previousDelegateId !== task.delegateId && previousDelegateId !== task.userId) {
+      this.publish(previousDelegateId, event);
+    }
     return result;
   }
 
   async history(userId: string, taskId: string): Promise<SyncEvent[]> {
-    return this.events.filter((event) => event.task.userId === userId && event.task.id === taskId);
+    return this.events.filter(
+      (event) => (event.task.userId === userId || event.task.delegateId === userId) && event.task.id === taskId
+    );
+  }
+
+  async createReport(userId: string, data: ReportData): Promise<string> {
+    const id = crypto.randomUUID();
+    this.reports.set(id, { userId, data });
+    return id;
+  }
+
+  async publicReport(id: string): Promise<ReportData | null> {
+    return this.reports.get(id)?.data ?? null;
   }
 
   async getSettings(userId: string): Promise<Record<string, unknown>> {
@@ -155,7 +186,12 @@ export class MemoryDataStore implements DataStore {
       tasks: [...this.tasks.values()].filter((task) => task.userId === userId),
       events: this.events.filter((event) => event.task.userId === userId),
       settings: await this.getSettings(userId),
-      legacy: [...this.legacy.values()]
+      legacy: [...this.legacy.entries()]
+        .filter(([key]) => key.startsWith(`${userId}:`))
+        .map(([, record]) => record),
+      reports: [...this.reports.entries()]
+        .filter(([, report]) => report.userId === userId)
+        .map(([id, report]) => ({ id, data: report.data }))
     };
   }
 }

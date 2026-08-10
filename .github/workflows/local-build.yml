@@ -25,3 +25,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm validate
+      - name: Validate migrations and PostgreSQL/WebSocket integration
+        run: |
+          podman info >/dev/null 2>&1 || podman machine start
+          CONTAINER_ENGINE=podman scripts/container-integration.sh
