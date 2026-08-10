@@ -33,9 +33,10 @@ The dated production review and verification evidence is recorded in
   only the `pgboss` schema.
 - The legacy Mongo connection is accepted only with an explicitly read-only
   URI and verified read privileges. Imported secret/token fields are stripped.
-- Production dependencies are version-locked, container bases are digest
-  pinned, GitHub Actions are commit pinned, checkout credentials are not
-  persisted, and builds run on a repository-scoped self-hosted runner.
+- Production dependencies are version-locked and container bases are digest
+  pinned. Checkout credentials are not persisted and builds run on a
+  repository-scoped self-hosted runner. GitHub Actions currently use major tags
+  and must be commit-pinned when a credential with `workflow` scope is available.
 
 ## Deployment checklist
 
@@ -68,3 +69,5 @@ The dated production review and verification evidence is recorded in
   email address alone is therefore never accepted as legacy-import proof;
   users should confirm a delegate's identity out of band before assigning
   private tasks.
+- GitHub Action references use mutable major-version tags until a repository
+  credential with `workflow` scope is available to commit-pin them.

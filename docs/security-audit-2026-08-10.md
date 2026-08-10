@@ -15,7 +15,7 @@ services, Cloudflare edge, and backup recoverability for `new.todorant.com`.
 | Medium | Only authentication routes were rate limited; imports, exports, delegation lookup, report sharing, commands, and realtime handshakes were unbounded. | Fixed with a global limiter and stricter route limits. |
 | Medium | Unexpected store/database errors could be returned to clients. | Fixed with a user-safe domain error allowlist and server-side-only diagnostics. |
 | Medium | The application accepted arbitrary settings keys and loosely bounded encryption/schedule metadata. | Fixed with strict field/type/range allowlists. |
-| Medium | CI actions and web container bases used mutable tags. | Fixed by commit-pinning actions and digest-pinning runtime/build images. |
+| Medium | CI actions and web container bases used mutable tags. | Container images are digest-pinned. GitHub Actions remain on major-version tags because the current GitHub OAuth credential lacks the `workflow` scope required to update workflow files; commit pinning remains an explicit follow-up. |
 | Medium | The dependency policy delayed new releases for only one day and did not enforce trust-downgrade/exotic-source checks. | Fixed with a seven-day policy, exact reviewed exceptions, no-downgrade verification, and blocked exotic transitive sources. |
 | Low | Password hashes used the lower OWASP Argon2id baseline and old hashes were never upgraded. | Fixed with 64 MiB/three iterations and successful-login rehashing. |
 | Low | Session token hashing used concatenation rather than a standard MAC; cookies lacked the production `__Host-` prefix. | Fixed with HMAC-SHA-256 and `__Host-`, `Secure`, `HttpOnly`, strict same-site cookies. Existing sessions intentionally expire at rollout. |
@@ -57,3 +57,7 @@ services, Cloudflare edge, and backup recoverability for `new.todorant.com`.
 4. Mailbox ownership is not verified in the initial email/password release.
    Email is never sufficient proof for legacy import; verify delegate identity
    out of band until an email verification flow is added.
+5. Pin every GitHub Action to a reviewed commit SHA once a repository credential
+   with `workflow` scope is available. The workflow is already least-privilege,
+   disables persisted checkout credentials, and runs only on the dedicated
+   self-hosted runner, but major-version action tags remain mutable upstream.
