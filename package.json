@@ -8,7 +8,7 @@
     "budget": "pnpm --filter @todorant/web budget",
     "db:check": "pnpm --filter @todorant/api db:check",
     "db:migrate": "pnpm --filter @todorant/api db:migrate",
-    "dev": "pnpm --parallel --filter @todorant/api --filter @todorant/web dev",
+    "dev": "pnpm --filter @todorant/domain build && pnpm --parallel --filter @todorant/api --filter @todorant/web dev",
     "lint": "eslint .",
     "security:deps": "pnpm audit --prod --audit-level high",
     "test": "pnpm -r test",

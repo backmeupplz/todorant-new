@@ -2,6 +2,7 @@ packages:
   - apps/*
   - packages/*
 
+injectWorkspacePackages: true
 minimumReleaseAge: 10080
 minimumReleaseAgeExclude:
   # Exact versions reviewed and locked during the initial security audit.
