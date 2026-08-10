@@ -64,6 +64,14 @@ describe("authenticated parity surface", () => {
     expect(workspace).toContain("Report");
     expect(workspace).toContain("Delegation");
     expect(workspace).toContain("Mobile Todorant workflow");
+    const primaryNavigation = workspace.match(/<nav class="primary-nav"[\s\S]*?<\/nav>/u)?.[0] ?? "";
+    expect(primaryNavigation).toContain("Current");
+    expect(primaryNavigation).toContain("Planning");
+    expect(primaryNavigation).not.toContain("Report");
+    expect(primaryNavigation).not.toContain("Delegation");
+    expect(workspace).toContain("More destinations and settings");
+    expect(workspace).toContain("Sync ");
+    expect(workspace).toContain("mobile-add");
     expect(workspace).not.toContain(">Today</button>");
     expect(workspace).not.toContain("Epics");
 
@@ -79,6 +87,38 @@ describe("authenticated parity surface", () => {
     expect(row).not.toContain("Epic name");
     expect(row).toContain("Conscious repetitive task");
     expect(row).toContain("1 redistribution");
+    expect(row).toContain('class="task-editor"');
+    expect(row).toContain("Basics");
+    expect(row).toContain("Planning");
+    expect(row).toContain("Behavior");
+    expect(row).toContain("Security &amp; history");
+    expect(row).toContain("Danger zone");
+
+    const compactRow = render(
+      <TaskRow task={value} index={0} all={[value]} current={false} expanded={false} onExpand={() => undefined} settings={{}} currentUserId={value.userId} />
+    );
+    expect(compactRow).toContain('class="task-title"');
+    expect(compactRow).not.toContain('class="task-editor"');
+  });
+
+  it("keeps Planning controls collapsed into Search and View disclosure", () => {
+    const value = task();
+    tasks.value = [value];
+    const planning = render(
+      <Workspace
+        initialView="planning"
+        session={{ user: { id: value.userId, email: "person@example.com" }, csrfToken: "csrf", settings: {} }}
+        logout={() => undefined}
+      />
+    );
+    expect(planning).toContain('class="planning-tools"');
+    expect(planning).toContain('aria-expanded="false"');
+    expect(planning).not.toContain('class="planning-search"');
+    expect(planning).toContain("View");
+    expect(planning).toContain("Calendar month");
+    expect(planning).toContain("Include completed");
+    expect(planning).toContain("Reorder tasks");
+    expect(planning).toContain("Add here");
   });
 
   it("excludes a skipped occurrence and future month-only work from Current and Today", () => {
