@@ -1,7 +1,7 @@
 import render from "preact-render-to-string";
 import { describe, expect, it } from "vitest";
 import { canonicalRules, rankBetween, type Task } from "@todorant/domain";
-import { isActionableOn, Landing, productDate, requiresPlanningOn, TaskRow, Workspace } from "./app.js";
+import { canReorderPlanningTasks, isActionableOn, Landing, planningReorderHelp, productDate, requiresPlanningOn, scheduleForNewTask, TaskRow, Workspace } from "./app.js";
 import { tasks } from "./sync.js";
 
 describe("public landing", () => {
@@ -26,7 +26,6 @@ const task = (overrides: Partial<Task> = {}): Task => ({
   frogFails: 1,
   skippedDates: [],
   tags: ["launch"],
-  epicId: "Launch",
   frog: false,
   rank: rankBetween(null, null),
   ownerId: "00000000-0000-4000-8000-000000000302",
@@ -43,12 +42,14 @@ const task = (overrides: Partial<Task> = {}): Task => ({
 
 describe("authenticated parity surface", () => {
   it("keeps canonical no-hero rules and the conscious repetitive-task behavior", () => {
+    expect(canonicalRules).toHaveLength(17);
     expect(canonicalRules.join(" ").toLocaleLowerCase()).not.toContain("hero point");
     expect(canonicalRules.join(" ")).toContain("does not have and will never have repeating tasks");
     expect(canonicalRules.join(" ")).toContain("break it down to a list of subtasks");
+    expect(canonicalRules.join(" ")).toContain("Instead, use #hashtags.");
   });
 
-  it("renders planning lock, current/planning/epic/report views, and parity task controls", () => {
+  it("renders planning lock, legacy workflow navigation, and parity task controls without epics", () => {
     const value = task();
     tasks.value = [value];
     const workspace = render(
@@ -57,10 +58,14 @@ describe("authenticated parity surface", () => {
         logout={() => undefined}
       />
     );
-    expect(workspace).toContain("Redistribute overdue work in Planning to unlock Current.");
+    expect(workspace).toContain("Redistribute overdue work before returning to Current.");
+    expect(workspace).toContain("Current");
     expect(workspace).toContain("Planning");
-    expect(workspace).toContain("Epics");
-    expect(workspace).toContain("Reports");
+    expect(workspace).toContain("Report");
+    expect(workspace).toContain("Delegation");
+    expect(workspace).toContain("Mobile Todorant workflow");
+    expect(workspace).not.toContain(">Today</button>");
+    expect(workspace).not.toContain("Epics");
 
     const row = render(
       <TaskRow task={value} index={0} all={[value]} current expanded onExpand={() => undefined} settings={{ duplicateTagInBreakdown: true }} currentUserId={value.userId} />
@@ -71,6 +76,9 @@ describe("authenticated parity surface", () => {
     expect(row).toContain("Exact time");
     expect(row).toContain("Encrypt task");
     expect(row).toContain("Load immutable history");
+    expect(row).not.toContain("Epic name");
+    expect(row).toContain("Conscious repetitive task");
+    expect(row).toContain("1 redistribution");
   });
 
   it("excludes a skipped occurrence and future month-only work from Current and Today", () => {
@@ -79,6 +87,32 @@ describe("authenticated parity surface", () => {
     expect(isActionableOn(task({ schedule: { month: "2026-09", date: null, time: null, timezone: "UTC" } }), date)).toBe(false);
     expect(requiresPlanningOn(task({ schedule: { month: "2026-08", date: null, time: null, timezone: "UTC" } }), date)).toBe(true);
     expect(requiresPlanningOn(task({ schedule: { month: "2026-09", date: null, time: null, timezone: "UTC" } }), date)).toBe(false);
+  });
+
+  it("keeps month-group Add month-only and preserves date-group context", () => {
+    expect(scheduleForNewTask("2026-08-10", null, "2026-11", true, "UTC")).toEqual({
+      month: "2026-11",
+      date: null,
+      time: null,
+      timezone: "UTC"
+    });
+    expect(scheduleForNewTask("2026-08-10", "2026-11-19", "2026-11", false, "UTC")).toEqual({
+      month: "2026-11",
+      date: "2026-11-19",
+      time: null,
+      timezone: "UTC"
+    });
+  });
+
+  it("allows planning drag ordering only inside the same schedule group", () => {
+    const source = task({ schedule: { month: "2026-11", date: null, time: null, timezone: "UTC" } });
+    const sameMonth = task({ id: "00000000-0000-4000-8000-000000000303", schedule: { ...source.schedule } });
+    const otherMonth = task({ id: "00000000-0000-4000-8000-000000000304", schedule: { month: "2026-12", date: null, time: null, timezone: "UTC" } });
+    const dated = task({ id: "00000000-0000-4000-8000-000000000305", schedule: { month: "2026-11", date: "2026-11-19", time: null, timezone: "UTC" } });
+    expect(canReorderPlanningTasks(source, sameMonth)).toBe(true);
+    expect(canReorderPlanningTasks(source, otherMonth)).toBe(false);
+    expect(canReorderPlanningTasks(source, dated)).toBe(false);
+    expect(planningReorderHelp).toBe("Tasks can only be dragged within the same date or month group");
   });
 
   it("renders owner revoke and accepted delegate states", () => {

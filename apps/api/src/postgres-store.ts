@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, or, sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
-import type { CommandResult, DelegationInvite, SyncEvent, TaskOperation } from "@todorant/domain";
+import { stripRemovedEpicData, type CommandResult, type DelegationInvite, type SyncEvent, type TaskOperation } from "@todorant/domain";
 import { applyOperation, changedFieldsFor } from "./sync.js";
 import * as schema from "./schema.js";
 import type {
@@ -51,7 +51,7 @@ export class PostgresDataStore implements DataStore {
       .innerJoin(schema.users, eq(schema.sessions.userId, schema.users.id))
       .where(and(eq(schema.sessions.tokenHash, tokenHash), gt(schema.sessions.expiresAt, new Date())))
       .limit(1);
-    return record ? { ...record.session, user: record.user } : null;
+    return record ? stripRemovedEpicData({ ...record.session, user: record.user }) : null;
   }
 
   async deleteSession(tokenHash: string): Promise<void> {
@@ -90,7 +90,7 @@ export class PostgresDataStore implements DataStore {
         .orderBy(desc(schema.taskEvents.cursor))
         .limit(1)
     ]);
-    return {
+    return stripRemovedEpicData({
       tasks: taskRows.map((row) => row.state),
       events: eventRows.map(({ event }) => ({
         cursor: event.cursor,
@@ -99,7 +99,7 @@ export class PostgresDataStore implements DataStore {
         operationId: event.operationId
       })),
       cursor: cursorRows[0]?.cursor ?? 0
-    };
+    });
   }
 
   async applyCommand(userId: string, operation: TaskOperation): Promise<CommandResult> {
@@ -265,7 +265,7 @@ export class PostgresDataStore implements DataStore {
         this.publish(previousDelegateId, event);
       }
     }
-    return result;
+    return stripRemovedEpicData(result);
   }
 
   async delegationInvites(userId: string): Promise<DelegationInvite[]> {
@@ -303,12 +303,12 @@ export class PostgresDataStore implements DataStore {
         )
       )
       .orderBy(asc(schema.taskEvents.cursor));
-    return rows.map(({ event }) => ({
+    return stripRemovedEpicData(rows.map(({ event }) => ({
       cursor: event.cursor,
       task: event.state,
       conflict: event.conflict ?? null,
       operationId: event.operationId
-    }));
+    })));
   }
 
   async createReport(userId: string, data: ReportData): Promise<string> {
@@ -327,12 +327,12 @@ export class PostgresDataStore implements DataStore {
       .select({ settings: schema.users.settings })
       .from(schema.users)
       .where(eq(schema.users.id, userId));
-    return user?.settings ?? {};
+    return stripRemovedEpicData(user?.settings ?? {});
   }
 
   async setSettings(userId: string, settings: Record<string, unknown>) {
     const current = await this.getSettings(userId);
-    const merged = { ...current, ...settings };
+    const merged = stripRemovedEpicData({ ...current, ...settings });
     await this.db.update(schema.users).set({ settings: merged }).where(eq(schema.users.id, userId));
     return merged;
   }
@@ -404,7 +404,7 @@ export class PostgresDataStore implements DataStore {
       this.db.select().from(schema.importRuns).where(eq(schema.importRuns.userId, userId)),
       this.db.select().from(schema.reports).where(eq(schema.reports.userId, userId))
     ]);
-    return { version: 1, exportedAt: new Date().toISOString(), ...snapshot, settings, legacy, importRuns: runs, reports };
+    return stripRemovedEpicData({ version: 1, exportedAt: new Date().toISOString(), ...snapshot, settings, legacy, importRuns: runs, reports });
   }
 }
 

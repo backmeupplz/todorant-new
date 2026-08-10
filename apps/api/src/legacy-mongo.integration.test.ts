@@ -118,7 +118,9 @@ suite("read-only legacy Mongo fixture", () => {
     const after = await admin.db(databaseName).collection("todos").countDocuments();
     expect(after).toBe(before);
     expect(source.tasks).toHaveLength(3);
-    expect(source.epics).toHaveLength(1);
+    expect(source.tags).toHaveLength(2);
+    expect(source.tags.find((tag) => tag.tag === "launch")).toEqual(expect.objectContaining({ tag: "launch" }));
+    expect(source.tags.some((tag) => Object.keys(tag).some((key) => key.toLocaleLowerCase().startsWith("epic")))).toBe(false);
     expect(source.users[0]).not.toHaveProperty("token");
     expect(source.users[0]).not.toHaveProperty("delegateInviteToken");
     expect(source.settings[0]).not.toHaveProperty("googleCalendarCredentials");
@@ -134,7 +136,7 @@ suite("read-only legacy Mongo fixture", () => {
     const migration = new MigrationService(store, reader);
     const first = await migration.run(await store.createImportRun(user.id, null), verified);
     const retry = await migration.run(await store.createImportRun(user.id, first.id), verified);
-    expect(first).toMatchObject({ status: "complete", counts: { tasks: 3, tags: 1, epics: 1 } });
+    expect(first).toMatchObject({ status: "complete", counts: { tasks: 3, tags: 2 } });
     expect(Object.values(retry.counts).every((count) => count === 0)).toBe(true);
     const imported = [...store.tasks.values()];
     expect(imported.find((item) => item.text === "Actual legacy task #launch")).toMatchObject({

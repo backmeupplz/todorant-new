@@ -5,6 +5,7 @@ import {
   normalizeEmail,
   normalizeTags,
   rankBetween,
+  stripRemovedEpicData,
   touchedFields,
   type TaskOperation
 } from "./index.js";
@@ -43,5 +44,20 @@ describe("sync protocol primitives", () => {
   it("never lets offline edits resurrect tombstones", () => {
     expect(canApplyToTombstone(operation())).toBe(false);
     expect(canApplyToTombstone(operation({ command: "restore" }))).toBe(true);
+  });
+
+  it("removes retired epic fields without changing ordinary task data", () => {
+    expect(stripRemovedEpicData({
+      text: "Keep me #launch",
+      tags: ["launch"],
+      epicId: "legacy-epic",
+      settings: { theme: "dark", epicGoals: { launch: 4 } },
+      conflict: { mine: { changedFields: { note: "Keep this", epicId: null } } }
+    })).toEqual({
+      text: "Keep me #launch",
+      tags: ["launch"],
+      settings: { theme: "dark" },
+      conflict: { mine: { changedFields: { note: "Keep this" } } }
+    });
   });
 });

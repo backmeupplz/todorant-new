@@ -1,5 +1,5 @@
 import { computed, signal } from "@preact/signals";
-import { compareRanks, rankBetween, type CommandResult, type Conflict, type SyncEvent, type Task, type TaskOperation } from "@todorant/domain";
+import { compareRanks, rankBetween, stripRemovedEpicData, type CommandResult, type Conflict, type SyncEvent, type Task, type TaskOperation } from "@todorant/domain";
 import {
   activateLocalUser,
   cursor,
@@ -135,7 +135,7 @@ export const optimisticTask = (current: Task | undefined, operation: TaskOperati
     null
   );
   let task: Task = current
-    ? { ...current, ...operation.changedFields, updatedAt: now }
+    ? { ...stripRemovedEpicData(current), ...operation.changedFields, updatedAt: now }
     : {
         id: operation.taskId,
         userId: activeUser,
@@ -148,7 +148,6 @@ export const optimisticTask = (current: Task | undefined, operation: TaskOperati
         frogFails: 0,
         skippedDates: [],
         tags: [],
-        epicId: operation.changedFields.epicId ?? null,
         frog: operation.changedFields.frog ?? false,
         rank: rankBetween(tailRank, null),
         ownerId: activeUser,

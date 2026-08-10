@@ -3,7 +3,7 @@ import { MongoClient, ObjectId, type Document } from "mongodb";
 import { normalizeEmail, type TaskOperation, type TaskSchedule } from "@todorant/domain";
 import type { DataStore, ImportRun, LegacyRecord } from "./store.js";
 
-const kinds = ["users", "settings", "tasks", "tags", "epics", "delegation", "history"] as const;
+const kinds = ["users", "settings", "tasks", "tags", "delegation", "history"] as const;
 type LegacyKind = (typeof kinds)[number];
 type LegacyDataset = Record<LegacyKind, Record<string, unknown>[]>;
 
@@ -17,7 +17,6 @@ const emptyRecords = (): LegacyDataset => ({
   settings: [],
   tasks: [],
   tags: [],
-  epics: [],
   delegation: [],
   history: []
 });
@@ -161,8 +160,8 @@ export class MongoLegacyReader implements LegacyReader {
       ];
       records.tasks = todos.map((todo) => allowlist(plain(todo), taskFields));
       const safeTags = tags.map((tag) => allowlist(plain(tag), tagFields));
-      records.tags = safeTags.filter((tag) => tag.epic !== true);
-      records.epics = safeTags.filter((tag) => tag.epic === true);
+      records.tags = safeTags
+        .map(({ epic: _epic, epicCompleted: _epicCompleted, epicGoal: _epicGoal, epicOrder: _epicOrder, ...tag }) => tag);
       records.delegation = [
         {
           _id: `${legacyUserId}:delegation`,
@@ -268,16 +267,6 @@ export class MigrationService {
         const vNextUser = await this.store.findUserByEmail(normalizeEmail(legacyUser.email));
         if (vNextUser) linkedUsers.set(legacyId(legacyUser), vNextUser.id);
       }
-      const epics = new Map(
-        source.epics
-          .filter((epic) => typeof epic.tag === "string")
-          .map((epic) => [String(epic.tag).toLocaleLowerCase(), stableUuid(`epics:${legacyId(epic)}`)])
-      );
-      const epicGoals = Object.fromEntries(
-        source.epics
-          .filter((epic) => typeof epic.tag === "string" && typeof epic.epicGoal === "number")
-          .map((epic) => [String(epic.tag), Number(epic.epicGoal)])
-      );
       for (const kind of kinds) {
         let imported = 0;
         for (const payload of source[kind]) {
@@ -292,19 +281,13 @@ export class MigrationService {
           };
           const changed = await this.store.upsertLegacyRecord(run.userId, record);
           if (changed) imported += 1;
-          if (kind === "tasks") await this.importTask(run.userId, record, epics, currentLegacyUserId, linkedUsers);
+          if (kind === "tasks") await this.importTask(run.userId, record, currentLegacyUserId, linkedUsers);
           if (kind === "settings" && changed) {
             const settings = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== "_id"));
             await this.store.setSettings(run.userId, settings);
           }
         }
         active.counts[kind] = imported;
-      }
-      if (Object.keys(epicGoals).length) {
-        const currentSettings = await this.store.getSettings(run.userId);
-        await this.store.setSettings(run.userId, {
-          epicGoals: { ...(currentSettings.epicGoals as Record<string, number> | undefined), ...epicGoals }
-        });
       }
       active.status = "complete";
     } catch (error) {
@@ -319,14 +302,12 @@ export class MigrationService {
   private async importTask(
     userId: string,
     record: LegacyRecord,
-    epics: Map<string, string>,
     currentLegacyUserId: string,
     linkedUsers: Map<string, string>
   ): Promise<void> {
     const payload = record.payload;
     const text = String(payload.text ?? "Imported task");
     const tags = payload.encrypted === true ? [] : tagsFromText(text);
-    const epicId = tags.map((tag) => epics.get(tag.toLocaleLowerCase())).find(Boolean) ?? null;
     const schedule = legacySchedule(payload);
     // In legacy Todorant, `delegator` is the assigning owner and `user` is the
     // assignee. For ordinary tasks `user` is also the owner. Import against the
@@ -357,7 +338,6 @@ export class MigrationService {
       frog: Boolean(payload.frog),
       frogFails: Number.isInteger(payload.frogFails) ? Number(payload.frogFails) : 0,
       repetitive: Boolean(payload.repetitive),
-      epicId,
       delegateId: accepted ? assigneeUserId : null,
       delegation,
       legacyDelegation: payload.delegator
