@@ -21,6 +21,7 @@ let csrf = "";
 let activeUser = "";
 let websocket: WebSocket | undefined;
 let reconnectTimer: number | undefined;
+let retryFlushTimer: number | undefined;
 let flushing = false;
 let eventChain = Promise.resolve();
 
@@ -72,14 +73,35 @@ const applyEvent = async (event: SyncEvent) => {
   await setCursor(event.cursor);
 };
 
+export class RequestFailure extends Error {
+  constructor(message: string, readonly retryable: boolean, readonly status?: number) {
+    super(message);
+    this.name = "RequestFailure";
+  }
+}
+
 const request = async <T>(url: string, init: RequestInit = {}): Promise<T> => {
   const headers = new Headers(init.headers);
   if (init.body) headers.set("content-type", "application/json");
   if (csrf && init.method && !["GET", "HEAD"].includes(init.method)) headers.set("x-csrf-token", csrf);
-  const response = await fetch(url, { ...init, headers });
-  if (!response.ok) throw new Error((await response.json().catch(() => null))?.error ?? "Request failed");
+  let response: Response;
+  try {
+    response = await fetch(url, { ...init, headers });
+  } catch {
+    throw new RequestFailure("Connection lost. This change will retry automatically.", true);
+  }
+  if (!response.ok) {
+    throw new RequestFailure(
+      (await response.json().catch(() => null))?.error ?? "Request failed",
+      response.status >= 500,
+      response.status
+    );
+  }
   return (response.status === 204 ? undefined : await response.json()) as T;
 };
+
+export const isRetryableFailure = (error: unknown): boolean =>
+  error instanceof RequestFailure && error.retryable;
 
 export const optimisticTask = (current: Task | undefined, operation: TaskOperation): Task => {
   const now = new Date().toISOString();
@@ -220,9 +242,15 @@ export async function flush(): Promise<void> {
           await setCursor(result.cursor);
         });
       } catch (caught) {
-        operation.status = "failed";
-        operation.error = caught instanceof Error ? caught.message : "Command rejected";
-        await db.put("operations", operation);
+        if (!isRetryableFailure(caught)) {
+          operation.status = "failed";
+          operation.error = caught instanceof Error ? caught.message : "Command rejected";
+          await db.put("operations", operation);
+        } else {
+          connection.value = "offline";
+          if (retryFlushTimer) window.clearTimeout(retryFlushTimer);
+          retryFlushTimer = window.setTimeout(() => void flush(), 1500);
+        }
         break;
       }
     }
@@ -293,6 +321,7 @@ export async function stopSync(): Promise<void> {
   csrf = "";
   window.removeEventListener("online", flush);
   if (reconnectTimer) window.clearTimeout(reconnectTimer);
+  if (retryFlushTimer) window.clearTimeout(retryFlushTimer);
   websocket?.close();
   websocket = undefined;
   tasks.value = [];

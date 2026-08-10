@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { compareRanks, type TaskOperation } from "@todorant/domain";
 import {
   activateLocalUser,
@@ -9,7 +9,7 @@ import {
   setCursor,
   type PendingOperation
 } from "./db.js";
-import { canAccessTask, optimisticTask, tasks } from "./sync.js";
+import { api, canAccessTask, isRetryableFailure, optimisticTask, RequestFailure, tasks } from "./sync.js";
 
 const operation = (
   operationId: string,
@@ -29,6 +29,7 @@ const operation = (
 });
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await deactivateLocalUser();
   tasks.value = [];
 });
@@ -86,5 +87,26 @@ describe("per-user IndexedDB replica", () => {
     expect(canAccessTask(task, delegateId)).toBe(true);
     expect(canAccessTask({ ...task, delegateId: null }, delegateId)).toBe(false);
     expect(canAccessTask({ ...task, delegateId: null }, ownerId)).toBe(true);
+  });
+
+  it("keeps transport and server outages retryable but surfaces deterministic rejection", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new TypeError("offline")));
+    const offline = await api.request("/api/commands", { method: "POST", body: "{}" }).catch((error) => error);
+    expect(offline).toBeInstanceOf(RequestFailure);
+    expect(isRetryableFailure(offline)).toBe(true);
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ error: "Temporary outage" }), {
+      status: 503,
+      headers: { "content-type": "application/json" }
+    })));
+    const outage = await api.request("/api/commands", { method: "POST", body: "{}" }).catch((error) => error);
+    expect(isRetryableFailure(outage)).toBe(true);
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ error: "Revision rejected" }), {
+      status: 409,
+      headers: { "content-type": "application/json" }
+    })));
+    const rejected = await api.request("/api/commands", { method: "POST", body: "{}" }).catch((error) => error);
+    expect(rejected).toMatchObject({ message: "Revision rejected", retryable: false, status: 409 });
   });
 });

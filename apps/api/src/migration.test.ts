@@ -14,12 +14,17 @@ class LegacyFixture implements LegacyReader {
   async read(legacyUserId: string) {
     this.calls.push(`read:${legacyUserId}`);
     return {
-      users: [{ _id: "507f1f77bcf86cd799439011", name: "Person", timezone: -420 }],
+      users: [
+        { _id: "507f1f77bcf86cd799439011", email: "person@example.com", name: "Person", timezone: -420 },
+        { _id: "507f191e810c19729de860ea", email: "friend@example.com", name: "Friend" }
+      ],
       settings: [{ _id: "legacy-user:settings", firstDayOfWeek: 1, newTodosGoFirst: true }],
       tasks: [
         {
           _id: "legacy-task",
-          user: "legacy-user",
+          user: "507f1f77bcf86cd799439011",
+          delegator: "507f191e810c19729de860ea",
+          delegateAccepted: true,
           text: "Imported safely #launch",
           frog: true,
           frogFails: 2,
@@ -46,6 +51,7 @@ describe("legacy migration", () => {
   it("requires ownership proof and retries an allowlisted real-schema fixture idempotently", async () => {
     const store = new MemoryDataStore();
     const user = await store.createUser("person@example.com", "hash");
+    const friend = await store.createUser("friend@example.com", "hash");
     const reader = new LegacyFixture();
     await expect(reader.verifyOwnership(user.email, "wrong-token")).rejects.toThrow("invalid proof");
     const legacyUserId = await reader.verifyOwnership(user.email, "legacy-access-token");
@@ -72,6 +78,8 @@ describe("legacy migration", () => {
       frog: true,
       frogFails: 2,
       repetitive: true,
+      delegateId: friend.id,
+      legacyDelegation: { delegatorId: "507f191e810c19729de860ea", accepted: true },
       skippedDates: ["2026-08-01"],
       schedule: { month: "2026-08", date: "2026-08-01", time: "09:30" }
     });

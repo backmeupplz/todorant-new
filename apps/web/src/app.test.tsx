@@ -1,7 +1,7 @@
 import render from "preact-render-to-string";
 import { describe, expect, it } from "vitest";
 import { canonicalRules, rankBetween, type Task } from "@todorant/domain";
-import { Landing, TaskRow, Workspace } from "./app.js";
+import { isActionableOn, Landing, productDate, requiresPlanningOn, TaskRow, Workspace } from "./app.js";
 import { tasks } from "./sync.js";
 
 describe("public landing", () => {
@@ -62,12 +62,26 @@ describe("authenticated parity surface", () => {
     expect(workspace).toContain("Reports");
 
     const row = render(
-      <TaskRow task={value} index={0} all={[value]} current expanded onExpand={() => undefined} />
+      <TaskRow task={value} index={0} all={[value]} current expanded onExpand={() => undefined} settings={{ duplicateTagInBreakdown: true }} />
     );
     expect(row).toContain("Break down into subtasks");
     expect(row).toContain("Copy occurrence");
     expect(row).toContain("Delegate to an existing account");
+    expect(row).toContain("Exact time");
     expect(row).toContain("Encrypt task");
     expect(row).toContain("Load immutable history");
+  });
+
+  it("excludes a skipped occurrence and future month-only work from Current and Today", () => {
+    const date = "2026-08-09";
+    expect(isActionableOn(task({ schedule: { month: "2026-08", date, time: null, timezone: "UTC" }, skippedDates: [date] }), date)).toBe(false);
+    expect(isActionableOn(task({ schedule: { month: "2026-09", date: null, time: null, timezone: "UTC" } }), date)).toBe(false);
+    expect(requiresPlanningOn(task({ schedule: { month: "2026-08", date: null, time: null, timezone: "UTC" } }), date)).toBe(true);
+    expect(requiresPlanningOn(task({ schedule: { month: "2026-09", date: null, time: null, timezone: "UTC" } }), date)).toBe(false);
+  });
+
+  it("applies the imported start-of-day boundary", () => {
+    expect(productDate("04:00", new Date("2026-08-09T02:30:00"))).toBe("2026-08-08");
+    expect(productDate("04:00", new Date("2026-08-09T05:00:00"))).toBe("2026-08-09");
   });
 });

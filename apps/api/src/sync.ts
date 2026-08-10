@@ -62,8 +62,11 @@ export function applyOperation(context: ApplyContext): { task: Task; conflict: C
 
   const original = context.current ?? defaults(context);
   const operationFields = touchedFields(operation);
+  // Tag commands carry their intent as add/remove sets. Applying that delta to
+  // the canonical set is commutative for independent changes, so a stale tag
+  // operation must not conflict merely because another client touched tags.
   const conflictingFields = operationFields.filter((field) =>
-    context.fieldsChangedAfterBase.includes(field)
+    context.fieldsChangedAfterBase.includes(field) && !(operation.command === "tags" && field === "tags")
   );
 
   if (original.deletedAt !== null && !canApplyToTombstone(operation)) {

@@ -36,6 +36,11 @@ suite("read-only legacy Mongo fixture", () => {
         googleCalendarCredentials: { access_token: "must-not-migrate" }
       }
     });
+    await database.collection("users").insertOne({
+      _id: new ObjectId("507f191e810c19729de860ea"),
+      email: "friend@example.com",
+      name: "Legacy Friend"
+    });
     await database.collection("todos").insertMany([
       {
         _id: new ObjectId("507f1f77bcf86cd799439012"),
@@ -109,6 +114,7 @@ suite("read-only legacy Mongo fixture", () => {
 
     const store = new MemoryDataStore();
     const user = await store.createUser("person@example.com", "hash");
+    const friend = await store.createUser("friend@example.com", "hash");
     const migration = new MigrationService(store, reader);
     const first = await migration.run(await store.createImportRun(user.id, null), verified);
     const retry = await migration.run(await store.createImportRun(user.id, first.id), verified);
@@ -123,7 +129,8 @@ suite("read-only legacy Mongo fixture", () => {
     });
     expect(imported[1]).toMatchObject({
       text: "U2FsdGVkX1+legacyciphertext",
-      encryption: { algorithm: "legacy-aes" }
+      encryption: { algorithm: "legacy-aes" },
+      delegateId: friend.id
     });
     expect(imported[1]?.legacyDelegation).toMatchObject({ accepted: true });
     expect(await admin.db(databaseName).collection("todos").countDocuments()).toBe(before);

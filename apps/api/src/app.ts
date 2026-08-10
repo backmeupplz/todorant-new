@@ -268,7 +268,7 @@ export async function buildApp(options: AppOptions) {
         const passwordHash = await argon2.hash(input.password, argonOptions);
         const user = await options.store.createUser(input.email, passwordHash);
         const csrfToken = await startSession(user.id, reply);
-        return reply.code(201).send({ user: { id: user.id, email: user.email }, csrfToken });
+        return reply.code(201).send({ user: { id: user.id, email: user.email }, csrfToken, settings: user.settings });
       } catch {
         return reply.code(400).send({ error: "Unable to create account with those details" });
       }
@@ -287,7 +287,7 @@ export async function buildApp(options: AppOptions) {
         return reply.code(401).send({ error: authError });
       }
       const csrfToken = await startSession(user.id, reply);
-      return { user: { id: user.id, email: user.email }, csrfToken };
+      return { user: { id: user.id, email: user.email }, csrfToken, settings: user.settings };
     }
   );
 

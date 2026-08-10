@@ -15,13 +15,17 @@ import {
   startSync,
   stopSync
 } from "./sync.js";
-import { decryptValue, encryptionPassphrase, encryptTaskFields } from "./encryption.js";
+import { decryptTaskValue, encryptionPassphrase, encryptTaskFields } from "./encryption.js";
 
 type Session = {
   user: { id: string; email: string };
   csrfToken: string;
   settings: Record<string, unknown>;
 };
+
+type ProductSettings = Record<string, unknown>;
+
+const enabled = (settings: ProductSettings, key: string): boolean => settings[key] === true;
 
 type ImportRun = {
   id: string;
@@ -46,7 +50,7 @@ export function Landing({ onAuthenticated }: { onAuthenticated: (session: Sessio
         method: "POST",
         body: JSON.stringify({ email: data.get("email"), password: data.get("password") })
       });
-      onAuthenticated({ ...session, settings: {} });
+      onAuthenticated(session);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Authentication failed");
     } finally {
@@ -92,11 +96,32 @@ export function Landing({ onAuthenticated }: { onAuthenticated: (session: Sessio
   );
 }
 
-const today = () => {
-  const date = new Date();
+export const productDate = (startTimeOfDay?: unknown, now = new Date()) => {
+  const date = new Date(now);
+  if (typeof startTimeOfDay === "string" && /^\d{2}:\d{2}$/u.test(startTimeOfDay)) {
+    const boundary = new Date(now);
+    const [hours, minutes] = startTimeOfDay.split(":").map(Number);
+    boundary.setHours(hours ?? 0, minutes ?? 0, 0, 0);
+    if (now < boundary) date.setDate(date.getDate() - 1);
+  }
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 };
+
+export const isActionableOn = (task: Task, date: string): boolean =>
+  !task.skippedDates.includes(date) && (
+    task.schedule.date ? task.schedule.date <= date : task.schedule.month === null
+  );
+
+export const requiresPlanningOn = (task: Task, date: string): boolean =>
+  !task.deletedAt && !task.completedAt && (
+    task.schedule.date ? task.schedule.date < date : Boolean(task.schedule.month && task.schedule.month <= date.slice(0, 7))
+  );
+
+const compareFocusOrder = (left: Task, right: Task, preserveOrderByTime: boolean): number =>
+  Number(right.frog) - Number(left.frog) ||
+  (preserveOrderByTime ? (left.schedule.time ?? "99:99").localeCompare(right.schedule.time ?? "99:99") : 0) ||
+  compareRanks(left.rank, right.rank);
 
 export function TaskRow({
   task,
@@ -104,7 +129,8 @@ export function TaskRow({
   all,
   current,
   expanded,
-  onExpand
+  onExpand,
+  settings
 }: {
   task: Task;
   index: number;
@@ -112,6 +138,7 @@ export function TaskRow({
   current: boolean;
   expanded: boolean;
   onExpand: () => void;
+  settings: ProductSettings;
 }) {
   const [text, setText] = useState(task.encryption ? "Encrypted task" : task.text);
   const [note, setNote] = useState(task.encryption ? "" : task.note);
@@ -127,13 +154,16 @@ export function TaskRow({
       return;
     }
     const passphrase = encryptionPassphrase.value;
-    if (!passphrase || task.encryption.algorithm === "legacy-aes") {
+    if (!passphrase) {
       setEncryptionUnlocked(false);
-      setText(task.encryption.algorithm === "legacy-aes" ? "Legacy encrypted task" : "Encrypted task · enter key in Settings");
+      setText(task.encryption.algorithm === "legacy-aes" ? "Legacy encrypted task · enter legacy password in Settings" : "Encrypted task · enter key in Settings");
       setNote("");
       return;
     }
-    void Promise.all([decryptValue(task.text, passphrase), decryptValue(task.note, passphrase)])
+    void Promise.all([
+      decryptTaskValue(task.text, passphrase, task.encryption.algorithm),
+      task.note ? decryptTaskValue(task.note, passphrase, task.encryption.algorithm) : Promise.resolve("")
+    ])
       .then(([plainText, plainNote]) => {
         setEncryptionUnlocked(true);
         setText(plainText);
@@ -203,7 +233,7 @@ export function TaskRow({
         epicId: task.epicId,
         parentId: task.id
       });
-      if (task.tags.length) {
+      if (task.tags.length && enabled(settings, "duplicateTagInBreakdown")) {
         await queueCommand(taskId, "tags", {}, { tagChanges: { add: task.tags, remove: [] } });
       }
     }
@@ -247,7 +277,7 @@ export function TaskRow({
         />
         {task.frog && <span class="badge" title="Frog task">frog</span>}
         {current && !task.frog && <span class="badge" title="Current focus">current</span>}
-        {(task.schedule.date || task.schedule.month) && <time class="date" dateTime={task.schedule.date ?? task.schedule.month ?? undefined}>{task.schedule.date ?? task.schedule.month}</time>}
+        {(task.schedule.date || task.schedule.month) && <time class="date" dateTime={task.schedule.date ?? task.schedule.month ?? undefined}>{task.schedule.date ?? task.schedule.month}{task.schedule.time ? ` · ${task.schedule.time}` : ""}</time>}
         <button class="icon-button" aria-label={`Details for ${task.text}`} aria-expanded={expanded} onClick={onExpand}>•••</button>
       </div>
       {expanded && (
@@ -291,10 +321,21 @@ export function TaskRow({
               value={task.schedule.month ?? ""}
               onInput={(event) => {
                 const month = event.currentTarget.value || null;
+                const currentDate = productDate(settings.startTimeOfDay);
                 void queueCommand(task.id, "update", {
-                  schedule: { ...task.schedule, month, date: month === today().slice(0, 7) ? today() : null }
+                  schedule: { ...task.schedule, month, date: month === currentDate.slice(0, 7) ? currentDate : null }
                 });
               }}
+            />
+          </label>
+          <label>
+            Exact time
+            <input
+              type="time"
+              value={task.schedule.time ?? ""}
+              onInput={(event) => void queueCommand(task.id, "update", {
+                schedule: { ...task.schedule, time: event.currentTarget.value || null }
+              })}
             />
           </label>
           <label>
@@ -326,7 +367,7 @@ export function TaskRow({
             <button onClick={() => void queueCommand(task.id, "update", { frog: !task.frog })}>{task.frog ? "Unmark frog" : "Mark frog"}</button>
             {!task.encryption && <button disabled={encryptionPassphrase.value.length < 12} title={encryptionPassphrase.value.length < 12 ? "Set an encryption key in Settings first" : undefined} onClick={() => void encryptTaskFields(text, note, encryptionPassphrase.value).then((fields) => queueCommand(task.id, "update", fields))}>Encrypt task</button>}
             {task.repetitive && <button onClick={() => void copyTask()}>Copy occurrence</button>}
-            <button disabled={task.frog} title={task.frog ? "Frogs cannot be skipped" : undefined} onClick={() => void queueCommand(task.id, "skip", {}, { skipDate: task.schedule.date ?? today() })}>Skip</button>
+            <button disabled={task.frog} title={task.frog ? "Frogs cannot be skipped" : undefined} onClick={() => void queueCommand(task.id, "skip", {}, { skipDate: productDate(settings.startTimeOfDay) })}>Skip</button>
             <button aria-label="Move task up" disabled={index === 0} onClick={() => move(-1)}>↑</button>
             <button aria-label="Move task down" disabled={index === all.length - 1} onClick={() => move(1)}>↓</button>
             <button class="danger" onClick={() => void queueCommand(task.id, "delete")}>Delete</button>
@@ -386,7 +427,17 @@ function SyncErrorPanel() {
   );
 }
 
-function SettingsPanel({ session, close }: { session: Session; close: () => void }) {
+function SettingsPanel({
+  session,
+  settings,
+  updateSettings,
+  close
+}: {
+  session: Session;
+  settings: ProductSettings;
+  updateSettings: (settings: ProductSettings) => void;
+  close: () => void;
+}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [run, setRun] = useState<ImportRun | null>(null);
   const [legacyToken, setLegacyToken] = useState("");
@@ -397,7 +448,13 @@ function SettingsPanel({ session, close }: { session: Session; close: () => void
   }, []);
   const setTheme = async (theme: string) => {
     document.documentElement.classList.toggle("dark", theme === "dark");
-    await api.request("/api/settings", { method: "PATCH", body: JSON.stringify({ theme }) });
+    updateSettings(await api.request<ProductSettings>("/api/settings", { method: "PATCH", body: JSON.stringify({ theme }) }));
+  };
+  const setProductSetting = async (key: string, value: boolean | number | string) => {
+    updateSettings(await api.request<ProductSettings>("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ [key]: value })
+    }));
   };
   const beginImport = async () => {
     const created = await api.request<ImportRun>("/api/import", {
@@ -411,7 +468,7 @@ function SettingsPanel({ session, close }: { session: Session; close: () => void
         setRun(result.run);
         if (result.run?.status === "complete" || result.run?.status === "failed") {
           window.clearInterval(poll);
-          void pull();
+          void Promise.all([pull(), api.request<ProductSettings>("/api/settings")]).then(([, imported]) => updateSettings(imported));
         }
       });
     }, 1200);
@@ -422,10 +479,20 @@ function SettingsPanel({ session, close }: { session: Session; close: () => void
       <p class="account-email">{session.user.email}</p>
       <label>
         Appearance
-        <select value={String(session.settings.theme ?? "system")} onInput={(event) => void setTheme(event.currentTarget.value)}>
+        <select value={String(settings.theme ?? "system")} onInput={(event) => void setTheme(event.currentTarget.value)}>
           <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
         </select>
       </label>
+      <section class="settings-section">
+        <h3>Planning behavior</h3>
+        <label><input type="checkbox" checked={enabled(settings, "showTodayOnAddTodo")} onInput={(event) => void setProductSetting("showTodayOnAddTodo", event.currentTarget.checked)} /> Default new tasks to today</label>
+        <label><input type="checkbox" checked={enabled(settings, "newTodosGoFirst")} onInput={(event) => void setProductSetting("newTodosGoFirst", event.currentTarget.checked)} /> Put new tasks first</label>
+        <label><input type="checkbox" checked={enabled(settings, "preserveOrderByTime")} onInput={(event) => void setProductSetting("preserveOrderByTime", event.currentTarget.checked)} /> Preserve exact-time order</label>
+        <label><input type="checkbox" checked={enabled(settings, "showMoreByDefault")} onInput={(event) => void setProductSetting("showMoreByDefault", event.currentTarget.checked)} /> Open task details by default</label>
+        <label><input type="checkbox" checked={enabled(settings, "duplicateTagInBreakdown")} onInput={(event) => void setProductSetting("duplicateTagInBreakdown", event.currentTarget.checked)} /> Copy tags into subtasks</label>
+        <label>First day of week<select value={String(settings.firstDayOfWeek ?? 1)} onInput={(event) => void setProductSetting("firstDayOfWeek", Number(event.currentTarget.value))}><option value="0">Sunday</option><option value="1">Monday</option><option value="6">Saturday</option></select></label>
+        <label>Start of Todorant day<input type="time" value={String(settings.startTimeOfDay ?? "00:00")} onInput={(event) => void setProductSetting("startTimeOfDay", event.currentTarget.value)} /></label>
+      </section>
       <section class="settings-section">
         <h3>Encryption</h3>
         <label>Local encryption key<input type="password" minlength={12} value={passphrase} placeholder="Not sent to the server" onInput={(event) => { setPassphrase(event.currentTarget.value); encryptionPassphrase.value = event.currentTarget.value; }} /></label>
@@ -489,13 +556,22 @@ function EpicSummary({ all, settings }: { all: Task[]; settings: Record<string, 
 }
 
 export function Workspace({ session, logout }: { session: Session; logout: () => void }) {
+  const [settings, setSettings] = useState<ProductSettings>(session.settings);
   const [filter, setFilter] = useState<TaskView>("current");
   const [search, setSearch] = useState("");
   const [rulesOpen, setRulesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const initializedDefaultExpansion = useRef(false);
+  const date = productDate(settings.startTimeOfDay);
+  useEffect(() => {
+    if (!initializedDefaultExpansion.current && enabled(settings, "showMoreByDefault") && orderedTasks.value[0]) {
+      initializedDefaultExpansion.current = true;
+      setExpanded(orderedTasks.value[0].id);
+    }
+  }, [orderedTasks.value, settings.showMoreByDefault]);
   const planningRequired = orderedTasks.value.some(
-    (task) => !task.deletedAt && !task.completedAt && task.schedule.date !== null && task.schedule.date < today()
+    (task) => requiresPlanningOn(task, date)
   );
   const list = useMemo(() => {
     const visible = orderedTasks.value.filter((task) => (filter === "trash" ? task.deletedAt : !task.deletedAt));
@@ -505,14 +581,14 @@ export function Workspace({ session, logout }: { session: Session; logout: () =>
     if (filter === "current") {
       if (planningRequired) return [];
       return matching
-        .filter((task) => !task.completedAt && (!task.schedule.date || task.schedule.date <= today()))
-        .sort((a, b) => Number(b.frog) - Number(a.frog) || compareRanks(a.rank, b.rank))
+        .filter((task) => !task.completedAt && isActionableOn(task, date))
+        .sort((a, b) => compareFocusOrder(a, b, enabled(settings, "preserveOrderByTime")))
         .slice(0, 1);
     }
     if (filter === "today") {
       return matching
-        .filter((task) => !task.schedule.date || task.schedule.date <= today())
-        .sort((a, b) => Number(b.frog) - Number(a.frog) || Number(Boolean(a.completedAt)) - Number(Boolean(b.completedAt)));
+        .filter((task) => isActionableOn(task, date))
+        .sort((a, b) => Number(Boolean(a.completedAt)) - Number(Boolean(b.completedAt)) || compareFocusOrder(a, b, enabled(settings, "preserveOrderByTime")));
     }
     if (filter === "planning") {
       return matching
@@ -525,7 +601,7 @@ export function Workspace({ session, logout }: { session: Session; logout: () =>
     }
     if (filter === "epics") return matching.filter((task) => task.epicId);
     return matching;
-  }, [orderedTasks.value, filter, search, planningRequired]);
+  }, [orderedTasks.value, filter, search, planningRequired, date, settings.preserveOrderByTime]);
 
   const create = async (event: Event) => {
     event.preventDefault();
@@ -534,14 +610,19 @@ export function Workspace({ session, logout }: { session: Session; logout: () =>
     const text = input.value.trim();
     if (!text) return;
     input.value = "";
-    const date = today();
+    const selectedDate = (form.elements.namedItem("date") as HTMLInputElement).value || null;
+    const selectedTime = (form.elements.namedItem("time") as HTMLInputElement).value || null;
+    const nextMonth = new Date(`${date}T12:00:00`);
+    nextMonth.setMonth(nextMonth.getMonth() + 1);
+    const scheduleDate = selectedDate ?? (enabled(settings, "showTodayOnAddTodo") ? date : null);
+    const scheduleMonth = scheduleDate?.slice(0, 7) ?? `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}`;
     const protectedFields = encryptionPassphrase.value.length >= 12
       ? await encryptTaskFields(text, "", encryptionPassphrase.value)
       : { text };
     await queueCommand(crypto.randomUUID(), "create", {
       ...protectedFields,
-      schedule: { month: date.slice(0, 7), date, time: null, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
-    });
+      schedule: { month: scheduleMonth, date: scheduleDate, time: selectedTime, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
+    }, enabled(settings, "newTodosGoFirst") ? { ordering: { afterId: null, beforeId: orderedTasks.value[0]?.id ?? null } } : {});
   };
 
   return (
@@ -565,9 +646,12 @@ export function Workspace({ session, logout }: { session: Session; logout: () =>
         {filter !== "trash" && (
           <form class="quick-add" onSubmit={(event) => void create(event)}>
             <input name="task" aria-label="New task" placeholder="Add a task and press Enter" autocomplete="off" />
+            <input name="date" aria-label="New task date" type="date" defaultValue={enabled(settings, "showTodayOnAddTodo") ? date : ""} />
+            <input name="time" aria-label="New task exact time" type="time" />
             <button class="primary" type="submit">Add</button>
           </form>
         )}
+        {filter === "planning" && <p class="meta">Weeks start {Number(settings.firstDayOfWeek ?? 1) === 0 ? "Sunday" : Number(settings.firstDayOfWeek ?? 1) === 6 ? "Saturday" : "Monday"} · Todorant day starts {String(settings.startTimeOfDay ?? "00:00")}</p>}
         <ConflictPanel items={conflicts.value} />
         <SyncErrorPanel />
         {filter === "epics" && <EpicSummary all={orderedTasks.value} settings={session.settings} />}
@@ -577,7 +661,7 @@ export function Workspace({ session, logout }: { session: Session; logout: () =>
               filter === "trash" ? (
                 <li class="task trash-row" key={task.id}><span>{task.text}</span><button onClick={() => void queueCommand(task.id, "restore")}>Restore</button></li>
               ) : (
-                <TaskRow key={task.id} task={task} index={index} all={list} current={filter === "today" && index === 0 && !task.completedAt} expanded={expanded === task.id} onExpand={() => setExpanded(expanded === task.id ? null : task.id)} />
+                <TaskRow key={task.id} task={task} index={index} all={list} current={filter === "today" && index === 0 && !task.completedAt} expanded={expanded === task.id} onExpand={() => setExpanded(expanded === task.id ? null : task.id)} settings={settings} />
               )
             )}
           </ul>
@@ -587,7 +671,7 @@ export function Workspace({ session, logout }: { session: Session; logout: () =>
       </main>
       <footer><span>Local-first · revisioned history</span><button class="quiet" onClick={logout}>Log out</button></footer>
       {rulesOpen && <RulesPanel close={() => setRulesOpen(false)} />}
-      {settingsOpen && <SettingsPanel session={session} close={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsPanel session={session} settings={settings} updateSettings={setSettings} close={() => setSettingsOpen(false)} />}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { MongoClient, ObjectId, type Document } from "mongodb";
-import type { TaskOperation, TaskSchedule } from "@todorant/domain";
+import { normalizeEmail, type TaskOperation, type TaskSchedule } from "@todorant/domain";
 import type { DataStore, ImportRun, LegacyRecord } from "./store.js";
 
 const kinds = ["users", "settings", "tasks", "tags", "epics", "delegation", "history"] as const;
@@ -28,7 +28,7 @@ const plain = (document: Document): Record<string, unknown> =>
 const allowlist = (source: Record<string, unknown>, fields: readonly string[]) =>
   Object.fromEntries(fields.filter((field) => source[field] !== undefined).map((field) => [field, source[field]]));
 
-const userFields = ["_id", "name", "timezone", "telegramZen", "telegramLanguage", "createdAt", "updatedAt"] as const;
+const userFields = ["_id", "email", "name", "timezone", "telegramZen", "telegramLanguage", "createdAt", "updatedAt"] as const;
 const settingFields = [
   "removeCompletedFromCalendar",
   "showTodayOnAddTodo",
@@ -135,9 +135,19 @@ export class MongoLegacyReader implements LegacyReader {
         database.collection("reports").find({ user: id }).sort({ _id: 1 }).toArray()
       ]);
 
+      const relatedIds = [...new Set(todos.flatMap((todo) => [todo.user, todo.delegator])
+        .filter((value): value is ObjectId => value instanceof ObjectId)
+        .map(String))];
+      const relatedUsers = relatedIds.length
+        ? await database.collection("users").find({ _id: { $in: relatedIds.map((value) => new ObjectId(value)) } }).toArray()
+        : [];
+
       const sourceUser = plain(legacyUser);
       const records = emptyRecords();
-      records.users = [allowlist(sourceUser, userFields)];
+      records.users = relatedUsers.map((user) => allowlist(plain(user), userFields));
+      if (!records.users.some((user) => String(user._id) === legacyUserId)) {
+        records.users.unshift(allowlist(sourceUser, userFields));
+      }
       records.settings = [
         {
           _id: `${legacyUserId}:settings`,
@@ -251,6 +261,13 @@ export class MigrationService {
     await this.store.updateImportRun(active);
     try {
       const source = await this.reader.read(legacyUserId);
+      const currentLegacyUserId = legacyId(source.users.find((user) => legacyId(user) === legacyUserId) ?? { _id: legacyUserId });
+      const linkedUsers = new Map<string, string>();
+      for (const legacyUser of source.users) {
+        if (typeof legacyUser.email !== "string") continue;
+        const vNextUser = await this.store.findUserByEmail(normalizeEmail(legacyUser.email));
+        if (vNextUser) linkedUsers.set(legacyId(legacyUser), vNextUser.id);
+      }
       const epics = new Map(
         source.epics
           .filter((epic) => typeof epic.tag === "string")
@@ -275,7 +292,7 @@ export class MigrationService {
           };
           const changed = await this.store.upsertLegacyRecord(run.userId, record);
           if (changed) imported += 1;
-          if (kind === "tasks") await this.importTask(run.userId, record, epics);
+          if (kind === "tasks") await this.importTask(run.userId, record, epics, currentLegacyUserId, linkedUsers);
           if (kind === "settings" && changed) {
             const settings = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== "_id"));
             await this.store.setSettings(run.userId, settings);
@@ -302,7 +319,9 @@ export class MigrationService {
   private async importTask(
     userId: string,
     record: LegacyRecord,
-    epics: Map<string, string>
+    epics: Map<string, string>,
+    currentLegacyUserId: string,
+    linkedUsers: Map<string, string>
   ): Promise<void> {
     const snapshot = await this.store.snapshot(userId, 0);
     const current = snapshot.tasks.find((task) => task.id === record.importedId);
@@ -311,6 +330,10 @@ export class MigrationService {
     const tags = payload.encrypted === true ? [] : tagsFromText(text);
     const epicId = tags.map((tag) => epics.get(tag.toLocaleLowerCase())).find(Boolean) ?? null;
     const schedule = legacySchedule(payload);
+    const legacyOwnerId = String(payload.user ?? "");
+    const legacyDelegatorId = String(payload.delegator ?? "");
+    const counterpartyLegacyId = legacyOwnerId === currentLegacyUserId ? legacyDelegatorId : legacyOwnerId;
+    const delegateId = counterpartyLegacyId ? linkedUsers.get(counterpartyLegacyId) ?? null : null;
     const changedFields: TaskOperation["changedFields"] = {
       text,
       note: "",
@@ -318,7 +341,7 @@ export class MigrationService {
       frogFails: Number.isInteger(payload.frogFails) ? Number(payload.frogFails) : 0,
       repetitive: Boolean(payload.repetitive),
       epicId,
-      delegateId: null,
+      delegateId,
       legacyDelegation: payload.delegator
         ? {
             userId: String(payload.user),

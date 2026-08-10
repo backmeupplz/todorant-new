@@ -73,6 +73,32 @@ describe("multi-client synchronization", () => {
     expect(tagged.task.rank.length).toBeGreaterThan(0);
   });
 
+  it("merges concurrent stale tag deltas without a whole-field conflict", async () => {
+    const store = new MemoryDataStore();
+    await store.applyCommand("user-1", op("00000000-0000-4000-8000-000000000033", 0, { text: "Tagged" }, "create"));
+    const clientA = await store.applyCommand("user-1", {
+      ...op("00000000-0000-4000-8000-000000000034", 1, {}, "tags"),
+      deviceId: "device-a",
+      tagChanges: { add: ["alpha"], remove: [] }
+    });
+    const clientB = await store.applyCommand("user-1", {
+      ...op("00000000-0000-4000-8000-000000000035", 1, {}, "tags"),
+      deviceId: "device-b",
+      tagChanges: { add: ["beta"], remove: [] }
+    });
+    expect(clientA.conflict).toBeNull();
+    expect(clientB.conflict).toBeNull();
+    expect(clientB.task.tags).toEqual(["alpha", "beta"]);
+
+    const staleRemove = await store.applyCommand("user-1", {
+      ...op("00000000-0000-4000-8000-000000000036", 2, {}, "tags"),
+      deviceId: "device-a",
+      tagChanges: { add: [], remove: ["alpha"] }
+    });
+    expect(staleRemove.conflict).toBeNull();
+    expect(staleRemove.task.tags).toEqual(["beta"]);
+  });
+
   it("assigns distinct stable tail ranks to new tasks", async () => {
     const store = new MemoryDataStore();
     const first = await store.applyCommand(
