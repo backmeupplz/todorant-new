@@ -25,6 +25,15 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm validate
+      - name: Build production web image from a clean linux/amd64 context
+        run: |
+          podman info >/dev/null 2>&1 || podman machine start
+          web_image="localhost/todorant-web-ci:${GITHUB_SHA}"
+          trap 'podman image rm -f "$web_image" >/dev/null 2>&1 || true' EXIT
+          podman build --no-cache --platform linux/amd64 \
+            --file apps/web/Dockerfile \
+            --tag "$web_image" \
+            .
       - name: Validate migrations and PostgreSQL/WebSocket integration
         run: |
           podman info >/dev/null 2>&1 || podman machine start
