@@ -48,6 +48,7 @@ button, .button-link, summary { align-items: center; background: transparent; bo
 .auth-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; display: grid; gap: 15px; max-width: 380px; padding: 20px; }
 label { color: var(--muted); display: grid; font-size: .75rem; font-weight: 650; gap: 6px; letter-spacing: .025em; }
 input, textarea, select { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; min-width: 0; padding: 9px 10px; }
+input:not([type="checkbox"]), select { min-height: 44px; }
 .error { color: var(--danger); font-size: .85rem; margin: 0; }
 
 .shell { display: grid; grid-template-rows: auto 1fr auto; min-height: 100dvh; }
@@ -78,7 +79,7 @@ nav button.active { color: var(--ink); position: relative; }
 .task.is-reorderable:active { cursor: grabbing; opacity: .7; }
 .task-main { align-items: center; display: flex; gap: 8px; min-height: 50px; padding: 3px 8px 3px 10px; }
 .is-current .task-main { min-height: 82px; padding: 14px; }
-.check { align-items: center; border-radius: 50%; display: flex; height: 22px; justify-content: center; padding: 0; width: 22px; }
+.check { align-items: center; border-radius: 50%; display: flex; flex: 0 0 44px; height: 44px; justify-content: center; padding: 0; width: 44px; }
 .check[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .task-title { background: transparent; border: 0; flex: 1 1 auto; font-size: .94rem; justify-content: flex-start; min-width: 80px; overflow: hidden; padding: 4px 1px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .is-current .task-title { font-size: clamp(1.05rem, 2vw, 1.3rem); font-weight: 650; }
@@ -123,7 +124,7 @@ footer { align-items: center; border-top: 1px solid var(--line); color: var(--mu
 .view-popover { background: var(--surface); border: 1px solid var(--line); border-radius: 11px; box-shadow: 0 12px 30px rgb(0 0 0 / .12); display: grid; gap: 4px; min-width: 230px; padding: 7px; position: absolute; top: calc(100% + 5px); z-index: 8; }
 .view-popover button { justify-content: flex-start; }
 .month-control { display: grid; padding: 5px; }
-.month-control input { min-height: 40px; padding: 6px 9px; }
+.month-control input { min-height: 44px; padding: 6px 9px; }
 .filter-count { align-items: center; background: var(--accent); border-radius: 99px; color: var(--accent-ink); display: inline-flex; font-size: .65rem; font-weight: 800; height: 18px; justify-content: center; min-width: 18px; padding: 0 5px; }
 .active-filter-badge { background: var(--soft); border-radius: 99px; color: var(--accent); font-size: .68rem; font-weight: 750; padding: 5px 8px; }
 .planning-groups { display: grid; gap: 11px; }
@@ -154,7 +155,7 @@ footer { align-items: center; border-top: 1px solid var(--line); color: var(--mu
 .editor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .editor-grid h3 { grid-column: 1 / -1; }
 .editor-order { align-items: end; }
-.check-label { align-items: center; display: flex; gap: 8px; }
+.check-label { align-items: center; display: flex; gap: 8px; min-height: 44px; }
 .check-label input { flex: 0 0 auto; }
 .danger-zone { border-bottom: 0; }
 .danger-zone h3, .danger-zone .danger { color: var(--danger); }

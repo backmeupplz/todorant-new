@@ -318,6 +318,7 @@ export function TaskRow({
         <button
           class="task-title"
           aria-label={`Edit ${task.text}`}
+          aria-expanded={expanded}
           onClick={onExpand}
         >{text}</button>
         {task.frog && <span class="badge" title="Frog task">frog</span>}
@@ -339,7 +340,7 @@ export function TaskRow({
             <div class="editor-content">
               <section class="editor-section" aria-labelledby={`basics-${task.id}`}>
                 <h3 id={`basics-${task.id}`}>Basics</h3>
-                <label>Task title<input value={text} disabled={task.encryption !== null && !encryptionUnlocked} onInput={(event) => setText(event.currentTarget.value)} onBlur={() => void saveText()} /></label>
+                <label>Task title<input autofocus value={text} disabled={task.encryption !== null && !encryptionUnlocked} onInput={(event) => setText(event.currentTarget.value)} onBlur={() => void saveText()} /></label>
                 <label>Note<textarea value={note} disabled={task.encryption !== null && !encryptionUnlocked} rows={3} onInput={(event) => setNote(event.currentTarget.value)} onBlur={(event) => {
                   if (!task.encryption && event.currentTarget.value !== task.note) void queueCommand(task.id, "update", { note: event.currentTarget.value });
                   if (task.encryption && encryptionPassphrase.value) void encryptTaskFields(text, event.currentTarget.value, encryptionPassphrase.value).then((fields) => queueCommand(task.id, "update", fields));
