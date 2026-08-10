@@ -119,6 +119,30 @@ export const requiresPlanningOn = (task: Task, date: string): boolean =>
     task.schedule.date ? task.schedule.date < date : Boolean(task.schedule.month && task.schedule.month <= date.slice(0, 7))
   );
 
+export const planningGroupFor = (task: Task): string =>
+  task.schedule.date ?? task.schedule.month ?? "Unscheduled";
+
+export const canReorderPlanningTasks = (source: Task, target: Task): boolean =>
+  planningGroupFor(source) === planningGroupFor(target);
+
+export const planningReorderHelp =
+  "Tasks can only be dragged within the same date or month group";
+
+export function scheduleForNewTask(
+  productDay: string,
+  selectedDate: string | null,
+  contextualMonth: string | null,
+  scheduleToday: boolean,
+  timezone: string
+): Task["schedule"] {
+  const nextMonth = new Date(`${productDay}T12:00:00`);
+  nextMonth.setMonth(nextMonth.getMonth() + 1);
+  const scheduleDate = selectedDate ?? (!contextualMonth && scheduleToday ? productDay : null);
+  const scheduleMonth = scheduleDate?.slice(0, 7) ?? contextualMonth ??
+    `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}`;
+  return { month: scheduleMonth, date: scheduleDate, time: null, timezone };
+}
+
 const compareFocusOrder = (left: Task, right: Task, preserveOrderByTime: boolean): number =>
   Number(right.frog) - Number(left.frog) ||
   (preserveOrderByTime ? (left.schedule.time ?? "99:99").localeCompare(right.schedule.time ?? "99:99") : 0) ||
@@ -577,6 +601,7 @@ export function Workspace({ session, logout }: { session: Session; logout: () =>
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [addDate, setAddDate] = useState("");
+  const [addMonth, setAddMonth] = useState("");
   const [showCompleted, setShowCompleted] = useState(false);
   const [planningMonth, setPlanningMonth] = useState("");
   const [reorderEnabled, setReorderEnabled] = useState(false);
@@ -682,7 +707,7 @@ export function Workspace({ session, logout }: { session: Session; logout: () =>
   const planningGroups = useMemo(() => {
     const groups = new Map<string, Task[]>();
     for (const task of list) {
-      const key = task.schedule.date ?? task.schedule.month ?? "Unscheduled";
+      const key = planningGroupFor(task);
       groups.set(key, [...(groups.get(key) ?? []), task]);
     }
     return [...groups];
@@ -690,10 +715,14 @@ export function Workspace({ session, logout }: { session: Session; logout: () =>
 
   const dropTaskBefore = (targetId: string) => {
     if (!draggingId || draggingId === targetId) return;
-    const sourceIndex = list.findIndex((task) => task.id === draggingId);
-    const targetIndex = list.findIndex((task) => task.id === targetId);
-    if (sourceIndex < 0 || targetIndex < 0) return;
-    const withoutSource = list.filter((task) => task.id !== draggingId);
+    const source = list.find((task) => task.id === draggingId);
+    const target = list.find((task) => task.id === targetId);
+    if (!source || !target || !canReorderPlanningTasks(source, target)) {
+      setDraggingId(null);
+      return;
+    }
+    const group = planningGroupFor(target);
+    const withoutSource = list.filter((task) => task.id !== draggingId && planningGroupFor(task) === group);
     const insertion = withoutSource.findIndex((task) => task.id === targetId);
     void queueCommand(draggingId, "reorder", {}, {
       ordering: {
@@ -713,19 +742,23 @@ export function Workspace({ session, logout }: { session: Session; logout: () =>
     input.value = "";
     const selectedDate = (form.elements.namedItem("date") as HTMLInputElement).value || null;
     const selectedTime = (form.elements.namedItem("time") as HTMLInputElement).value || null;
-    const nextMonth = new Date(`${date}T12:00:00`);
-    nextMonth.setMonth(nextMonth.getMonth() + 1);
-    const scheduleDate = selectedDate ?? (enabled(settings, "showTodayOnAddTodo") ? date : null);
-    const scheduleMonth = scheduleDate?.slice(0, 7) ?? `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}`;
+    const schedule = scheduleForNewTask(
+      date,
+      selectedDate,
+      addMonth || null,
+      enabled(settings, "showTodayOnAddTodo"),
+      Intl.DateTimeFormat().resolvedOptions().timeZone
+    );
     const protectedFields = encryptionPassphrase.value.length >= 12
       ? await encryptTaskFields(text, "", encryptionPassphrase.value)
       : { text };
     await queueCommand(crypto.randomUUID(), "create", {
       ...protectedFields,
-      schedule: { month: scheduleMonth, date: scheduleDate, time: selectedTime, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
+      schedule: { ...schedule, time: selectedTime }
     }, enabled(settings, "newTodosGoFirst") ? { ordering: { afterId: null, beforeId: orderedTasks.value[0]?.id ?? null } } : {});
     setAddOpen(false);
     setAddDate("");
+    setAddMonth("");
   };
 
   return (
@@ -745,18 +778,20 @@ export function Workspace({ session, logout }: { session: Session; logout: () =>
         </div>
       </header>
       <main class="workspace">
-        <div class="list-header"><div><span class="eyebrow">{filter === "current" ? "One thing at a time" : filter === "planning" || filter === "today" ? "Trust the system" : "Todorant"}</span><h1>{filter === "reports" ? "Report" : filter === "today" ? "Planning · Today" : `${filter[0]?.toUpperCase()}${filter.slice(1)}`}</h1></div><div class="header-actions"><span class="count">{list.length}</span>{!(["reports", "trash"] as TaskView[]).includes(filter) && <button class="add-context" aria-keyshortcuts="A" onClick={() => { setAddDate(enabled(settings, "showTodayOnAddTodo") ? date : ""); setAddOpen(true); window.setTimeout(() => quickAddInput.current?.focus(), 0); }}>＋ Add task</button>}</div></div>
+        <div class="list-header"><div><span class="eyebrow">{filter === "current" ? "One thing at a time" : filter === "planning" || filter === "today" ? "Trust the system" : "Todorant"}</span><h1>{filter === "reports" ? "Report" : filter === "today" ? "Planning · Today" : `${filter[0]?.toUpperCase()}${filter.slice(1)}`}</h1></div><div class="header-actions"><span class="count">{list.length}</span>{!(["reports", "trash"] as TaskView[]).includes(filter) && <button class="add-context" aria-keyshortcuts="A" onClick={() => { const today = enabled(settings, "showTodayOnAddTodo"); setAddDate(today ? date : ""); setAddMonth(today ? date.slice(0, 7) : ""); setAddOpen(true); window.setTimeout(() => quickAddInput.current?.focus(), 0); }}>＋ Add task</button>}</div></div>
         {filter === "current" && <section class="day-progress" aria-label={`${completedToday} of ${todayTasks.length} tasks completed today`}><span>{completedToday} / {todayTasks.length} today</span><progress max={Math.max(todayTasks.length, 1)} value={completedToday} /></section>}
         {filter === "current" && planningRequired && <aside class="planning-lock"><strong>Planning comes first.</strong><span>Redistribute overdue work before returning to Current.</span><button class="primary" onClick={() => setFilter("planning")}>Open Planning</button></aside>}
-        {(filter === "planning" || filter === "today") && <div class="planning-tools" role="toolbar" aria-label="Planning controls"><button class={filter === "today" ? "active" : ""} aria-pressed={filter === "today"} onClick={() => setFilter(filter === "today" ? "planning" : "today")}>Today</button><label class="month-control"><span>Calendar month</span><input type="month" value={planningMonth} onInput={(event) => { setPlanningMonth(event.currentTarget.value); setFilter("planning"); }} /></label><button aria-pressed={showCompleted} onClick={() => setShowCompleted(!showCompleted)}>{showCompleted ? "Hide completed" : "Completed"}</button><button aria-pressed={reorderEnabled} onClick={() => setReorderEnabled(!reorderEnabled)}>{reorderEnabled ? "Done ordering" : "Reorder"}</button></div>}
+        {(filter === "planning" || filter === "today") && <div class="planning-tools" role="toolbar" aria-label="Planning controls"><button class={filter === "today" ? "active" : ""} aria-pressed={filter === "today"} onClick={() => setFilter(filter === "today" ? "planning" : "today")}>Today</button><label class="month-control"><span>Calendar month</span><input type="month" value={planningMonth} onInput={(event) => { setPlanningMonth(event.currentTarget.value); setFilter("planning"); }} /></label><button aria-pressed={showCompleted} onClick={() => setShowCompleted(!showCompleted)}>{showCompleted ? "Hide completed" : "Completed"}</button><button aria-pressed={reorderEnabled} title={planningReorderHelp} onClick={() => setReorderEnabled(!reorderEnabled)}>{reorderEnabled ? "Done ordering" : "Reorder"}</button></div>}
+        {reorderEnabled && filter === "planning" && <p class="meta">Drag tasks within the same date or month group. Change a task’s schedule to move it between groups.</p>}
         {filter !== "current" && filter !== "reports" && <input class="search" type="search" value={search} placeholder="Search tasks, notes, and tags" aria-label="Search tasks" onInput={(event) => setSearch(event.currentTarget.value)} />}
         {addOpen && (
           <form class="quick-add" onSubmit={(event) => void create(event)}>
             <input ref={quickAddInput} name="task" aria-label="New task" aria-keyshortcuts="A" placeholder="Capture an actionable task…" autocomplete="off" />
+            {addMonth && !addDate && <span class="meta">Planning month: {addMonth}</span>}
             <input name="date" aria-label="New task date" type="date" value={addDate} onInput={(event) => setAddDate(event.currentTarget.value)} />
             <input name="time" aria-label="New task exact time" type="time" />
             <button class="primary" type="submit">Add</button>
-            <button type="button" onClick={() => { setAddOpen(false); setAddDate(""); }}>Cancel</button>
+            <button type="button" onClick={() => { setAddOpen(false); setAddDate(""); setAddMonth(""); }}>Cancel</button>
           </form>
         )}
         {filter === "planning" && <p class="meta">Weeks start {Number(settings.firstDayOfWeek ?? 1) === 0 ? "Sunday" : Number(settings.firstDayOfWeek ?? 1) === 6 ? "Saturday" : "Monday"} · Todorant day starts {String(settings.startTimeOfDay ?? "00:00")}</p>}
@@ -777,7 +812,7 @@ export function Workspace({ session, logout }: { session: Session; logout: () =>
         )}
         {filter === "reports" ? <ReportPanel all={orderedTasks.value} /> : filter === "planning" && list.length ? (
           <div class="planning-groups">
-            {planningGroups.map(([group, groupTasks]) => <section class="planning-group" key={group}><header><div><span>{group.length === 7 ? "Month" : group < date ? "Overdue" : group === date ? "Today" : "Scheduled"}</span><h2>{group}</h2></div><button aria-label={`Add task for ${group}`} onClick={() => { setAddDate(group.length === 10 ? group : `${group}-01`); setAddOpen(true); window.setTimeout(() => quickAddInput.current?.focus(), 0); }}>＋</button></header><ul class="task-list">{groupTasks.map((task) => { const index = list.indexOf(task); return <TaskRow key={task.id} task={task} index={index} all={list} current={false} expanded={expanded === task.id} onExpand={() => setExpanded(expanded === task.id ? null : task.id)} settings={settings} currentUserId={session.user.id} reorderEnabled={reorderEnabled} onDragStart={() => setDraggingId(task.id)} onDrop={() => dropTaskBefore(task.id)} />; })}</ul></section>)}
+            {planningGroups.map(([group, groupTasks]) => <section class="planning-group" key={group}><header><div><span>{group.length === 7 ? "Month" : group < date ? "Overdue" : group === date ? "Today" : "Scheduled"}</span><h2>{group}</h2></div><button aria-label={`Add task for ${group}`} onClick={() => { setAddDate(group.length === 10 ? group : ""); setAddMonth(group.slice(0, 7)); setAddOpen(true); window.setTimeout(() => quickAddInput.current?.focus(), 0); }}>＋</button></header><ul class="task-list">{groupTasks.map((task, index) => <TaskRow key={task.id} task={task} index={index} all={groupTasks} current={false} expanded={expanded === task.id} onExpand={() => setExpanded(expanded === task.id ? null : task.id)} settings={settings} currentUserId={session.user.id} reorderEnabled={reorderEnabled} onDragStart={() => setDraggingId(task.id)} onDrop={() => dropTaskBefore(task.id)} />)}</ul></section>)}
           </div>
         ) : list.length ? (
           <ul class="task-list">

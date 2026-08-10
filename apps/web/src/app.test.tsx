@@ -1,7 +1,7 @@
 import render from "preact-render-to-string";
 import { describe, expect, it } from "vitest";
 import { canonicalRules, rankBetween, type Task } from "@todorant/domain";
-import { isActionableOn, Landing, productDate, requiresPlanningOn, TaskRow, Workspace } from "./app.js";
+import { canReorderPlanningTasks, isActionableOn, Landing, planningReorderHelp, productDate, requiresPlanningOn, scheduleForNewTask, TaskRow, Workspace } from "./app.js";
 import { tasks } from "./sync.js";
 
 describe("public landing", () => {
@@ -87,6 +87,32 @@ describe("authenticated parity surface", () => {
     expect(isActionableOn(task({ schedule: { month: "2026-09", date: null, time: null, timezone: "UTC" } }), date)).toBe(false);
     expect(requiresPlanningOn(task({ schedule: { month: "2026-08", date: null, time: null, timezone: "UTC" } }), date)).toBe(true);
     expect(requiresPlanningOn(task({ schedule: { month: "2026-09", date: null, time: null, timezone: "UTC" } }), date)).toBe(false);
+  });
+
+  it("keeps month-group Add month-only and preserves date-group context", () => {
+    expect(scheduleForNewTask("2026-08-10", null, "2026-11", true, "UTC")).toEqual({
+      month: "2026-11",
+      date: null,
+      time: null,
+      timezone: "UTC"
+    });
+    expect(scheduleForNewTask("2026-08-10", "2026-11-19", "2026-11", false, "UTC")).toEqual({
+      month: "2026-11",
+      date: "2026-11-19",
+      time: null,
+      timezone: "UTC"
+    });
+  });
+
+  it("allows planning drag ordering only inside the same schedule group", () => {
+    const source = task({ schedule: { month: "2026-11", date: null, time: null, timezone: "UTC" } });
+    const sameMonth = task({ id: "00000000-0000-4000-8000-000000000303", schedule: { ...source.schedule } });
+    const otherMonth = task({ id: "00000000-0000-4000-8000-000000000304", schedule: { month: "2026-12", date: null, time: null, timezone: "UTC" } });
+    const dated = task({ id: "00000000-0000-4000-8000-000000000305", schedule: { month: "2026-11", date: "2026-11-19", time: null, timezone: "UTC" } });
+    expect(canReorderPlanningTasks(source, sameMonth)).toBe(true);
+    expect(canReorderPlanningTasks(source, otherMonth)).toBe(false);
+    expect(canReorderPlanningTasks(source, dated)).toBe(false);
+    expect(planningReorderHelp).toBe("Tasks can only be dragged within the same date or month group");
   });
 
   it("renders owner revoke and accepted delegate states", () => {
