@@ -62,20 +62,21 @@ export class MemoryDataStore implements DataStore {
   async applyCommand(userId: string, operation: TaskOperation): Promise<CommandResult> {
     const operationKey = `${userId}:${operation.operationId}`;
     const duplicate = this.operations.get(operationKey);
-    if (duplicate) return { ...duplicate, duplicate: true };
-
     const candidate = [...this.tasks.values()].find((task) => task.id === operation.taskId) ?? null;
     const pendingForUser = candidate?.delegation?.status === "pending" && candidate.delegation.delegateId === userId;
     const responding = operation.command === "delegate-accept" || operation.command === "delegate-reject";
-    const current = candidate && (
-      candidate.userId === userId || candidate.delegateId === userId || (responding && pendingForUser)
-    ) ? candidate : null;
+    const authorized = candidate && (candidate.userId === userId || candidate.delegateId === userId) ? candidate : null;
+    const current = authorized ?? (responding && pendingForUser ? candidate : null);
     const previousDelegateId = current?.delegateId ?? null;
     const taskKey = `${current?.userId ?? userId}:${operation.taskId}`;
+    if (duplicate) {
+      if (!authorized || duplicate.task.id !== operation.taskId) throw new Error("Task not found");
+      return { ...duplicate, duplicate: true };
+    }
+    if (candidate && !current) throw new Error("Task not found");
     if (current && operation.baseRevision > current.revision) {
       throw new Error("Base revision is ahead of the canonical task");
     }
-    if (candidate && !current) throw new Error("Task not found");
     if (current && ["delegate-assign", "delegate-revoke"].includes(operation.command) && current.userId !== userId) {
       throw new Error("Only the owner can change delegation");
     }

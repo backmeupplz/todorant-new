@@ -167,17 +167,22 @@ suite("PostgreSQL REST and WebSocket synchronization", () => {
     expect(ownerEdit.statusCode).toBe(200);
     await expect(event).resolves.toMatchObject({ type: "event", event: { task: { note: "Owner edit" } } });
 
-    const delegateEdit = await send(delegate, {
+    const delegateEditOperation = {
       ...base,
       deviceId: "integration-delegate",
       operationId: "00000000-0000-4000-8000-000000000104",
       baseRevision: 5,
       command: "update",
       changedFields: { note: "Offline delegate edit" }
-    });
+    };
+    const delegateEdit = await send(delegate, delegateEditOperation);
     expect(delegateEdit.json()).toMatchObject({
       task: { note: "Owner edit", revision: 7 },
       conflict: { fields: ["note"], mine: { changedFields: { note: "Offline delegate edit" } } }
+    });
+    expect((await send(delegate, delegateEditOperation)).json()).toMatchObject({
+      duplicate: true,
+      task: { revision: 7 }
     });
 
     const deleted = await send(owner, {
@@ -228,6 +233,27 @@ suite("PostgreSQL REST and WebSocket synchronization", () => {
       type: "event",
       event: { task: { id: taskId, delegateId: null } }
     });
+    const revokedReplay = await send(delegate, delegateEditOperation);
+    expect(revokedReplay.statusCode).toBe(409);
+    expect(revokedReplay.json()).toEqual({ error: "Task not found" });
+
+    const pendingAgain = await assign(11, "00000000-0000-4000-8000-000000000113");
+    expect(pendingAgain.json()).toMatchObject({ task: { revision: 12, delegation: { status: "pending" } } });
+    const pendingReplay = await send(delegate, delegateEditOperation);
+    expect(pendingReplay.statusCode).toBe(409);
+    expect(pendingReplay.json()).toEqual({ error: "Task not found" });
+    const disguisedPendingReplay = await respond(
+      "accept",
+      12,
+      "00000000-0000-4000-8000-000000000104"
+    );
+    expect(disguisedPendingReplay.statusCode).toBe(409);
+    expect(disguisedPendingReplay.json()).toEqual({ error: "Task not found" });
+    expect((await respond("reject", 12, "00000000-0000-4000-8000-000000000114")).statusCode).toBe(204);
+    const rejectedReplay = await send(delegate, delegateEditOperation);
+    expect(rejectedReplay.statusCode).toBe(409);
+    expect(rejectedReplay.json()).toEqual({ error: "Task not found" });
+
     const revokedSnapshot = await app.inject({
       method: "GET",
       url: "/api/snapshot?cursor=0",
@@ -250,5 +276,19 @@ suite("PostgreSQL REST and WebSocket synchronization", () => {
     });
     await expect(firstFreshMessage).resolves.toMatchObject({ type: "ready" });
     freshWebsocket.close();
+
+    const delegateTaskId = "00000000-0000-4000-8000-000000000201";
+    expect((await send(delegate, {
+      ...base,
+      taskId: delegateTaskId,
+      deviceId: "integration-delegate",
+      operationId: "00000000-0000-4000-8000-000000000115",
+      baseRevision: 0,
+      command: "create",
+      changedFields: { text: "Delegate-owned" }
+    })).statusCode).toBe(200);
+    const retargetedReplay = await send(delegate, { ...delegateEditOperation, taskId: delegateTaskId });
+    expect(retargetedReplay.statusCode).toBe(409);
+    expect(retargetedReplay.json()).toEqual({ error: "Task not found" });
   });
 });
