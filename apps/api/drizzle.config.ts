@@ -5,7 +5,7 @@ export default defineConfig({
   schema: "./src/schema.ts",
   out: "./drizzle",
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? "postgresql://todorant:todorant@localhost:5432/todorant"
+    url: process.env.MIGRATION_DATABASE_URL ?? process.env.DATABASE_URL ?? "postgresql://todorant:todorant@localhost:5432/todorant"
   },
   strict: true
 });

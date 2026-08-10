@@ -11,6 +11,7 @@
     "start": "node dist/server.js",
     "test": "vitest run --pool=threads",
     "test:integration": "vitest run --pool=threads src/postgres.integration.test.ts",
+    "test:security-integration": "vitest run --pool=threads src/security-bootstrap.integration.test.ts",
     "test:legacy-integration": "vitest run --pool=threads src/legacy-mongo.integration.test.ts",
     "typecheck": "tsc -p tsconfig.json"
   },

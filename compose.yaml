@@ -2,6 +2,7 @@ services:
   postgres:
     image: postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
     environment:
+      PGDATA: /var/lib/postgresql/data
       POSTGRES_DB: todorant
       POSTGRES_PASSWORD: todorant
       POSTGRES_USER: todorant
@@ -11,7 +12,7 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - todorant-postgres:/var/lib/postgresql
 

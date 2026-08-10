@@ -44,12 +44,16 @@ PG_BIN="$(brew --prefix postgresql@18)/bin" scripts/postgres-integration.sh
 
 Create three Easypanel services: PostgreSQL 18.4, API, and web. The local Compose
 file pins the official multi-architecture 18.4 Alpine image digest and mounts
-the PostgreSQL 18 versioned data parent at `/var/lib/postgresql`. Use
+the PostgreSQL 18 versioned data parent at `/var/lib/postgresql`; its host port
+is bound to loopback only. Use
 `apps/api/nixpacks.toml` for the API and `apps/web/nixpacks.toml` for the static
 web service. Set the API environment from `.env.example`, use a unique session
 pepper, and give `LEGACY_MONGO_URL` a database user restricted to `find` and
 `listCollections`. The API also rejects legacy URLs that are not explicitly
-marked read-only.
+marked read-only. Production must use separate `todorant_runtime` and
+`todorant_boss` database logins in `DATABASE_URL` and `BOSS_DATABASE_URL`.
+`MIGRATION_DATABASE_URL` is used only by the startup migration/bootstrap step
+and is removed from the API process environment before the server starts.
 
 Set the web service's `API_UPSTREAM` to the private Easypanel API service URL.
 The committed Caddyfile serves the SPA and proxies same-origin `/api/*` and `/ws`
@@ -57,6 +61,11 @@ requests, including WebSocket upgrades. Route `new.todorant.com` only to this we
 service. Cloudflare must use Full (strict) TLS.
 Runtime credentials and the production legacy connection are deployment-owner
 configuration and are never committed.
+
+Schedule encrypted off-host PostgreSQL backups where the hosting provider
+supports them, retain at least 14 daily copies, and periodically restore one to
+a disposable database. See [`docs/security.md`](docs/security.md) for the
+security model and deployment checklist.
 
 GitHub Actions runs only on the repository-scoped runner labels
 `self-hosted`, `macOS`, `ARM64`, `todorant-new`, and `local-build`.

@@ -36,6 +36,10 @@ export class PostgresDataStore implements DataStore {
     return user ?? null;
   }
 
+  async updatePasswordHash(userId: string, passwordHash: string): Promise<void> {
+    await this.db.update(schema.users).set({ passwordHash }).where(eq(schema.users.id, userId));
+  }
+
   async createSession(session: SessionRecord): Promise<void> {
     await this.db.insert(schema.sessions).values(session);
   }
@@ -418,7 +422,15 @@ function mapImportRun(row: typeof schema.importRuns.$inferSelect): ImportRun {
 }
 
 export function createPostgresStore(connectionString: string, publish?: EventPublisher) {
-  const pool = new Pool({ connectionString, max: 10 });
+  const pool = new Pool({
+    connectionString,
+    max: 10,
+    connectionTimeoutMillis: 5_000,
+    idleTimeoutMillis: 30_000,
+    query_timeout: 20_000,
+    statement_timeout: 15_000,
+    application_name: "todorant-api"
+  });
   const db = drizzle(pool, { schema });
   return { store: new PostgresDataStore(db, publish), pool, db };
 }

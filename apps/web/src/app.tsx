@@ -522,14 +522,14 @@ function SettingsPanel({
       </section>
       <section class="settings-section">
         <h3>Encryption</h3>
-        <label>Local encryption key<input type="password" minlength={12} value={passphrase} placeholder="Not sent to the server" onInput={(event) => { setPassphrase(event.currentTarget.value); encryptionPassphrase.value = event.currentTarget.value; }} /></label>
+        <label>Local encryption key<input type="password" minlength={12} autocomplete="off" spellcheck={false} value={passphrase} placeholder="Not sent to the server" onInput={(event) => { setPassphrase(event.currentTarget.value); encryptionPassphrase.value = event.currentTarget.value; }} /></label>
         <p class="meta">The key stays in this browser session. Losing it makes encrypted task text unrecoverable.</p>
       </section>
       <section class="settings-section">
         <h3>Data</h3>
         <div class="stack-actions">
           <a class="secondary button-link" href="/api/export" download>Export my data</a>
-          <label>Legacy access token<input type="password" autocomplete="off" value={legacyToken} onInput={(event) => setLegacyToken(event.currentTarget.value)} /></label>
+          <label>Legacy access token<input type="password" autocomplete="off" spellcheck={false} value={legacyToken} onInput={(event) => setLegacyToken(event.currentTarget.value)} /></label>
           <button class="secondary" disabled={legacyToken.length < 16 || run?.status === "queued" || run?.status === "running"} onClick={() => void beginImport()}>Verify and import from Todorant</button>
         </div>
         {run && <p class="import-status" role="status">Import {run.status}{run.status === "complete" ? ` · ${Object.values(run.counts).reduce((sum, count) => sum + count, 0)} records` : ""}{run.errors[0] ? ` · ${run.errors[0]}` : ""}</p>}

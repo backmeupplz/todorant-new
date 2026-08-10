@@ -10,9 +10,10 @@
     "db:migrate": "pnpm --filter @todorant/api db:migrate",
     "dev": "pnpm --parallel --filter @todorant/api --filter @todorant/web dev",
     "lint": "eslint .",
+    "security:deps": "pnpm audit --prod --audit-level high",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "validate": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm db:check && pnpm budget"
+    "validate": "pnpm lint && pnpm typecheck && pnpm test && pnpm security:deps && pnpm build && pnpm db:check && pnpm budget"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

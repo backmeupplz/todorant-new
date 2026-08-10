@@ -33,6 +33,12 @@ export class MemoryDataStore implements DataStore {
     return [...this.users.values()].find((user) => user.email === email) ?? null;
   }
 
+  async updatePasswordHash(userId: string, passwordHash: string): Promise<void> {
+    const user = this.users.get(userId);
+    if (!user) throw new Error("User not found");
+    user.passwordHash = passwordHash;
+  }
+
   async createSession(session: SessionRecord): Promise<void> {
     this.sessions.set(session.tokenHash, session);
   }
