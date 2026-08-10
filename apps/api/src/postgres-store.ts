@@ -101,6 +101,17 @@ export class PostgresDataStore implements DataStore {
   async applyCommand(userId: string, operation: TaskOperation): Promise<CommandResult> {
     const outcome = await this.db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${operation.taskId}, 0))`);
+      const [candidate] = await tx
+        .select()
+        .from(schema.tasks)
+        .where(eq(schema.tasks.id, operation.taskId))
+        .limit(1);
+      const responding = operation.command === "delegate-accept" || operation.command === "delegate-reject";
+      const authorizedTask = candidate && (candidate.userId === userId || candidate.delegateId === userId)
+        ? candidate
+        : undefined;
+      const taskRow = authorizedTask ?? (responding && candidate?.pendingDelegateId === userId ? candidate : undefined);
+
       const [prior] = await tx
         .select()
         .from(schema.operations)
@@ -112,22 +123,12 @@ export class PostgresDataStore implements DataStore {
         )
         .limit(1);
       if (prior) {
+        if (!authorizedTask || prior.result.task.id !== operation.taskId) throw new Error("Task not found");
         return {
           result: { ...prior.result, duplicate: true },
           previousDelegateId: null
         };
       }
-
-      const [candidate] = await tx
-        .select()
-        .from(schema.tasks)
-        .where(eq(schema.tasks.id, operation.taskId))
-        .limit(1);
-      const responding = operation.command === "delegate-accept" || operation.command === "delegate-reject";
-      const taskRow = candidate && (
-        candidate.userId === userId || candidate.delegateId === userId ||
-        (responding && candidate.pendingDelegateId === userId)
-      ) ? candidate : undefined;
       if (candidate && !taskRow) throw new Error("Task not found");
       if (taskRow && operation.baseRevision > taskRow.revision) {
         throw new Error("Base revision is ahead of the canonical task");

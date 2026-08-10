@@ -193,14 +193,55 @@ describe("multi-client synchronization", () => {
     expect(accepted.task).toMatchObject({ delegateId: delegate.id, delegation: { status: "accepted" } });
     expect((await store.snapshot(delegate.id, 0)).tasks).toHaveLength(1);
 
+    const delegateEdit = op(
+      "00000000-0000-4000-8000-000000000046",
+      accepted.task.revision,
+      { note: "Delegate edit" }
+    );
+    const edited = await store.applyCommand(delegate.id, delegateEdit);
+    await expect(store.applyCommand(delegate.id, delegateEdit)).resolves.toMatchObject({
+      duplicate: true,
+      task: { note: "Delegate edit", revision: edited.task.revision }
+    });
+
     const revoked = await store.applyCommand(owner.id, lifecycle(
       "00000000-0000-4000-8000-000000000045",
-      accepted.task.revision,
+      edited.task.revision,
       "delegate-revoke"
     ));
     expect(revoked.task).toMatchObject({ delegateId: null, delegation: { status: "revoked" } });
     expect((await store.snapshot(delegate.id, 0)).tasks).toHaveLength(0);
     expect(await store.history(delegate.id, created.task.id)).toEqual([]);
+    await expect(store.applyCommand(delegate.id, delegateEdit)).rejects.toThrow("Task not found");
+
+    const delegateOwned = await store.applyCommand(delegate.id, {
+      ...op("00000000-0000-4000-8000-000000000049", 0, { text: "Delegate-owned" }, "create"),
+      taskId: "00000000-0000-4000-8000-000000000002"
+    });
+    await expect(store.applyCommand(delegate.id, {
+      ...delegateEdit,
+      taskId: delegateOwned.task.id
+    })).rejects.toThrow("Task not found");
+
+    const pendingAgain = await store.applyCommand(owner.id, lifecycle(
+      "00000000-0000-4000-8000-000000000047",
+      revoked.task.revision,
+      "delegate-assign",
+      delegate.id
+    ));
+    await expect(store.applyCommand(delegate.id, delegateEdit)).rejects.toThrow("Task not found");
+    await expect(store.applyCommand(delegate.id, {
+      ...delegateEdit,
+      command: "delegate-accept",
+      changedFields: {}
+    })).rejects.toThrow("Task not found");
+    const rejectedAgain = await store.applyCommand(delegate.id, lifecycle(
+      "00000000-0000-4000-8000-000000000048",
+      pendingAgain.task.revision,
+      "delegate-reject"
+    ));
+    expect(rejectedAgain.task.delegation?.status).toBe("rejected");
+    await expect(store.applyCommand(delegate.id, delegateEdit)).rejects.toThrow("Task not found");
   });
 
   it("turns a task into a frog after two overdue redistributions", async () => {
