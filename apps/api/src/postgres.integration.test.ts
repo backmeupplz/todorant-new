@@ -74,7 +74,7 @@ suite("PostgreSQL REST and WebSocket synchronization", () => {
       operationId: "00000000-0000-4000-8000-000000000102",
       baseRevision: 0,
       command: "create",
-      changedFields: { text: "Persist me", delegateId: delegate.user.id }
+      changedFields: { text: "Persist me" }
     });
     expect(created.statusCode).toBe(200);
     expect(created.json().task.revision).toBe(1);
@@ -83,10 +83,66 @@ suite("PostgreSQL REST and WebSocket synchronization", () => {
       operationId: "00000000-0000-4000-8000-000000000102",
       baseRevision: 0,
       command: "create",
-      changedFields: { text: "Persist me", delegateId: delegate.user.id }
+      changedFields: { text: "Persist me" }
     });
     expect(duplicate.json()).toMatchObject({ duplicate: true, task: { revision: 1 } });
 
+    const assign = (baseRevision: number, operationId: string) => send(owner, {
+      ...base,
+      operationId,
+      baseRevision,
+      command: "delegate-assign",
+      changedFields: {},
+      delegationUserId: delegate.user.id
+    });
+    const respond = (response: "accept" | "reject", baseRevision: number, operationId: string) => app.inject({
+      method: "POST",
+      url: `/api/delegations/${taskId}/${response}`,
+      headers: { cookie: delegate.cookie, "x-csrf-token": delegate.csrfToken },
+      payload: { baseRevision, operationId }
+    });
+
+    const pending = await assign(1, "00000000-0000-4000-8000-000000000109");
+    expect(pending.json()).toMatchObject({
+      task: { revision: 2, delegateId: null, delegation: { delegateId: delegate.user.id, status: "pending" } }
+    });
+    const invitations = await app.inject({
+      method: "GET",
+      url: "/api/delegations/invitations",
+      headers: { cookie: delegate.cookie }
+    });
+    expect(invitations.json()).toMatchObject({
+      invitations: [{ taskId, revision: 2, ownerEmail: "owner@example.com" }]
+    });
+    const pendingSnapshot = await app.inject({
+      method: "GET",
+      url: "/api/snapshot?cursor=0",
+      headers: { cookie: delegate.cookie }
+    });
+    expect(pendingSnapshot.json().tasks).toHaveLength(0);
+    expect(pendingSnapshot.json().events).toHaveLength(0);
+    const pendingHistory = await app.inject({
+      method: "GET",
+      url: `/api/tasks/${taskId}/history`,
+      headers: { cookie: delegate.cookie }
+    });
+    expect(pendingHistory.statusCode).toBe(404);
+
+    const rejected = await respond("reject", 2, "00000000-0000-4000-8000-000000000110");
+    expect(rejected.statusCode).toBe(204);
+    expect((await app.inject({
+      method: "GET",
+      url: "/api/delegations/invitations",
+      headers: { cookie: delegate.cookie }
+    })).json().invitations).toHaveLength(0);
+
+    expect((await assign(3, "00000000-0000-4000-8000-000000000111")).json()).toMatchObject({
+      task: { revision: 4, delegateId: null, delegation: { status: "pending" } }
+    });
+    const accepted = await respond("accept", 4, "00000000-0000-4000-8000-000000000112");
+    expect(accepted.json()).toMatchObject({
+      task: { revision: 5, delegateId: delegate.user.id, delegation: { status: "accepted" } }
+    });
     const delegatedSnapshot = await app.inject({
       method: "GET",
       url: "/api/snapshot?cursor=0",
@@ -94,7 +150,7 @@ suite("PostgreSQL REST and WebSocket synchronization", () => {
     });
     expect(delegatedSnapshot.json().tasks).toHaveLength(1);
 
-    const websocket = await app.injectWS("/ws?cursor=1", { headers: { cookie: delegate.cookie } });
+    const websocket = await app.injectWS("/ws?cursor=5", { headers: { cookie: delegate.cookie } });
     const event = new Promise<Record<string, unknown>>((resolve) => {
       websocket.on("message", (data: Buffer) => {
         const payload = JSON.parse(String(data)) as Record<string, unknown>;
@@ -104,7 +160,7 @@ suite("PostgreSQL REST and WebSocket synchronization", () => {
     const ownerEdit = await send(owner, {
       ...base,
       operationId: "00000000-0000-4000-8000-000000000103",
-      baseRevision: 1,
+      baseRevision: 5,
       command: "update",
       changedFields: { note: "Owner edit" }
     });
@@ -115,19 +171,19 @@ suite("PostgreSQL REST and WebSocket synchronization", () => {
       ...base,
       deviceId: "integration-delegate",
       operationId: "00000000-0000-4000-8000-000000000104",
-      baseRevision: 1,
+      baseRevision: 5,
       command: "update",
       changedFields: { note: "Offline delegate edit" }
     });
     expect(delegateEdit.json()).toMatchObject({
-      task: { note: "Owner edit", revision: 3 },
+      task: { note: "Owner edit", revision: 7 },
       conflict: { fields: ["note"], mine: { changedFields: { note: "Offline delegate edit" } } }
     });
 
     const deleted = await send(owner, {
       ...base,
       operationId: "00000000-0000-4000-8000-000000000105",
-      baseRevision: 3,
+      baseRevision: 7,
       command: "delete",
       changedFields: {}
     });
@@ -136,7 +192,7 @@ suite("PostgreSQL REST and WebSocket synchronization", () => {
       ...base,
       deviceId: "integration-delegate",
       operationId: "00000000-0000-4000-8000-000000000106",
-      baseRevision: 3,
+      baseRevision: 7,
       command: "update",
       changedFields: { text: "Cannot resurrect" }
     });
@@ -146,11 +202,11 @@ suite("PostgreSQL REST and WebSocket synchronization", () => {
     const restored = await send(owner, {
       ...base,
       operationId: "00000000-0000-4000-8000-000000000107",
-      baseRevision: 5,
+      baseRevision: 9,
       command: "restore",
       changedFields: {}
     });
-    expect(restored.json().task.revision).toBe(6);
+    expect(restored.json().task.revision).toBe(10);
     const revocationEvent = new Promise<Record<string, unknown>>((resolve) => {
       websocket.on("message", (data: Buffer) => {
         const payload = JSON.parse(String(data)) as Record<string, unknown>;
@@ -161,11 +217,13 @@ suite("PostgreSQL REST and WebSocket synchronization", () => {
     const revoked = await send(owner, {
       ...base,
       operationId: "00000000-0000-4000-8000-000000000108",
-      baseRevision: 6,
-      command: "update",
-      changedFields: { delegateId: null }
+      baseRevision: 10,
+      command: "delegate-revoke",
+      changedFields: {}
     });
-    expect(revoked.json()).toMatchObject({ task: { revision: 7, delegateId: null } });
+    expect(revoked.json()).toMatchObject({
+      task: { revision: 11, delegateId: null, delegation: { status: "revoked" } }
+    });
     await expect(revocationEvent).resolves.toMatchObject({
       type: "event",
       event: { task: { id: taskId, delegateId: null } }

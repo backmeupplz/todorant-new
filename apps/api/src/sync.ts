@@ -36,6 +36,7 @@ const defaults = (context: ApplyContext): Task => ({
   rank: rankBetween(context.beforeRank, context.afterRank),
   ownerId: context.userId,
   delegateId: null,
+  delegation: null,
   legacyDelegation: null,
   encryption: null,
   parentId: null,
@@ -136,6 +137,36 @@ export function applyOperation(context: ApplyContext): { task: Task; conflict: C
       }
       break;
     }
+    case "delegate-assign":
+      if (!operation.delegationUserId) throw new Error("A delegate is required");
+      if (!conflictingFields.includes("delegation")) {
+        next.delegateId = null;
+        next.delegation = { delegateId: operation.delegationUserId, status: "pending", updatedAt: now };
+      }
+      break;
+    case "delegate-accept":
+      if (!next.delegation || next.delegation.status !== "pending") throw new Error("Delegation is not pending");
+      if (!conflictingFields.includes("delegation")) {
+        next.delegateId = next.delegation.delegateId;
+        next.delegation = { ...next.delegation, status: "accepted", updatedAt: now };
+      }
+      break;
+    case "delegate-reject":
+      if (!next.delegation || next.delegation.status !== "pending") throw new Error("Delegation is not pending");
+      if (!conflictingFields.includes("delegation")) {
+        next.delegateId = null;
+        next.delegation = { ...next.delegation, status: "rejected", updatedAt: now };
+      }
+      break;
+    case "delegate-revoke":
+      if (!next.delegation || !["pending", "accepted"].includes(next.delegation.status)) {
+        throw new Error("Delegation is not active");
+      }
+      if (!conflictingFields.includes("delegation")) {
+        next.delegateId = null;
+        next.delegation = { ...next.delegation, status: "revoked", updatedAt: now };
+      }
+      break;
     case "create":
     case "update":
       break;

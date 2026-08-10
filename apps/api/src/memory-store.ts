@@ -1,4 +1,4 @@
-import { compareRanks, type CommandResult, type SyncEvent, type Task, type TaskOperation } from "@todorant/domain";
+import { compareRanks, type CommandResult, type DelegationInvite, type SyncEvent, type Task, type TaskOperation } from "@todorant/domain";
 import { applyOperation, changedFieldsFor } from "./sync.js";
 import type {
   DataStore,
@@ -64,13 +64,29 @@ export class MemoryDataStore implements DataStore {
     const duplicate = this.operations.get(operationKey);
     if (duplicate) return { ...duplicate, duplicate: true };
 
-    const current = [...this.tasks.values()].find(
-      (task) => task.id === operation.taskId && (task.userId === userId || task.delegateId === userId)
-    ) ?? null;
+    const candidate = [...this.tasks.values()].find((task) => task.id === operation.taskId) ?? null;
+    const pendingForUser = candidate?.delegation?.status === "pending" && candidate.delegation.delegateId === userId;
+    const responding = operation.command === "delegate-accept" || operation.command === "delegate-reject";
+    const current = candidate && (
+      candidate.userId === userId || candidate.delegateId === userId || (responding && pendingForUser)
+    ) ? candidate : null;
     const previousDelegateId = current?.delegateId ?? null;
     const taskKey = `${current?.userId ?? userId}:${operation.taskId}`;
     if (current && operation.baseRevision > current.revision) {
       throw new Error("Base revision is ahead of the canonical task");
+    }
+    if (candidate && !current) throw new Error("Task not found");
+    if (current && ["delegate-assign", "delegate-revoke"].includes(operation.command) && current.userId !== userId) {
+      throw new Error("Only the owner can change delegation");
+    }
+    if (current && responding && !pendingForUser) throw new Error("Delegation invitation not found");
+    if (operation.command === "delegate-assign") {
+      if (!operation.delegationUserId || operation.delegationUserId === userId || !this.users.has(operation.delegationUserId)) {
+        throw new Error("That delegate account is not available");
+      }
+      if (current?.delegation && ["pending", "accepted"].includes(current.delegation.status)) {
+        throw new Error("Revoke the current delegation first");
+      }
     }
     if (current && current.userId !== userId && operation.changedFields.delegateId !== undefined) {
       throw new Error("Only the owner can change delegation");
@@ -122,6 +138,17 @@ export class MemoryDataStore implements DataStore {
       this.publish(previousDelegateId, event);
     }
     return result;
+  }
+
+  async delegationInvites(userId: string): Promise<DelegationInvite[]> {
+    return [...this.tasks.values()]
+      .filter((task) => task.delegation?.status === "pending" && task.delegation.delegateId === userId)
+      .map((task) => ({
+        taskId: task.id,
+        revision: task.revision,
+        ownerEmail: this.users.get(task.userId)?.email ?? "Unknown owner",
+        assignedAt: task.delegation?.updatedAt ?? task.updatedAt
+      }));
   }
 
   async history(userId: string, taskId: string): Promise<SyncEvent[]> {

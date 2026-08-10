@@ -1,4 +1,4 @@
-import type { CommandResult, SyncEvent, Task, TaskOperation } from "@todorant/domain";
+import type { CommandResult, DelegationInvite, SyncEvent, Task, TaskOperation } from "@todorant/domain";
 
 export type UserRecord = {
   id: string;
@@ -47,6 +47,7 @@ export interface DataStore {
   deleteSession(tokenHash: string): Promise<void>;
   snapshot(userId: string, afterCursor: number): Promise<{ tasks: Task[]; events: SyncEvent[]; cursor: number }>;
   applyCommand(userId: string, operation: TaskOperation): Promise<CommandResult>;
+  delegationInvites(userId: string): Promise<DelegationInvite[]>;
   history(userId: string, taskId: string): Promise<SyncEvent[]>;
   createReport(userId: string, data: ReportData): Promise<string>;
   publicReport(id: string): Promise<ReportData | null>;

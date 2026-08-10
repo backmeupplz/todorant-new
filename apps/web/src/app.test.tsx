@@ -31,6 +31,7 @@ const task = (overrides: Partial<Task> = {}): Task => ({
   rank: rankBetween(null, null),
   ownerId: "00000000-0000-4000-8000-000000000302",
   delegateId: null,
+  delegation: null,
   legacyDelegation: null,
   encryption: null,
   parentId: null,
@@ -62,7 +63,7 @@ describe("authenticated parity surface", () => {
     expect(workspace).toContain("Reports");
 
     const row = render(
-      <TaskRow task={value} index={0} all={[value]} current expanded onExpand={() => undefined} settings={{ duplicateTagInBreakdown: true }} />
+      <TaskRow task={value} index={0} all={[value]} current expanded onExpand={() => undefined} settings={{ duplicateTagInBreakdown: true }} currentUserId={value.userId} />
     );
     expect(row).toContain("Break down into subtasks");
     expect(row).toContain("Copy occurrence");
@@ -78,6 +79,32 @@ describe("authenticated parity surface", () => {
     expect(isActionableOn(task({ schedule: { month: "2026-09", date: null, time: null, timezone: "UTC" } }), date)).toBe(false);
     expect(requiresPlanningOn(task({ schedule: { month: "2026-08", date: null, time: null, timezone: "UTC" } }), date)).toBe(true);
     expect(requiresPlanningOn(task({ schedule: { month: "2026-09", date: null, time: null, timezone: "UTC" } }), date)).toBe(false);
+  });
+
+  it("renders owner revoke and accepted delegate states", () => {
+    const owner = task({
+      delegation: {
+        delegateId: "00000000-0000-4000-8000-000000000303",
+        status: "pending",
+        updatedAt: "2026-01-01T01:00:00.000Z"
+      }
+    });
+    const ownerRow = render(
+      <TaskRow task={owner} index={0} all={[owner]} current expanded onExpand={() => undefined} settings={{}} currentUserId={owner.userId} />
+    );
+    expect(ownerRow).toContain("Delegation pending");
+    expect(ownerRow).toContain("Revoke delegation");
+
+    const delegateId = "00000000-0000-4000-8000-000000000303";
+    const delegated = task({
+      delegateId,
+      delegation: { delegateId, status: "accepted", updatedAt: "2026-01-01T02:00:00.000Z" }
+    });
+    const delegateRow = render(
+      <TaskRow task={delegated} index={0} all={[delegated]} current expanded onExpand={() => undefined} settings={{}} currentUserId={delegateId} />
+    );
+    expect(delegateRow).toContain("Delegated to you · accepted");
+    expect(delegateRow).not.toContain("Revoke delegation");
   });
 
   it("applies the imported start-of-day boundary", () => {

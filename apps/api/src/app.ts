@@ -70,7 +70,10 @@ const credentials = (body: unknown): { email: string; password: string } | null 
 const parseOperation = (body: unknown): TaskOperation | null => {
   if (!body || typeof body !== "object") return null;
   const value = body as Record<string, unknown>;
-  const commands = ["create", "update", "complete", "reopen", "skip", "delete", "restore", "reorder", "tags"] as const;
+  const commands = [
+    "create", "update", "complete", "reopen", "skip", "delete", "restore", "reorder", "tags",
+    "delegate-assign", "delegate-revoke"
+  ] as const;
   if (
     typeof value.operationId !== "string" ||
     !uuidPattern.test(value.operationId) ||
@@ -89,7 +92,7 @@ const parseOperation = (body: unknown): TaskOperation | null => {
   ) return null;
 
   const source = value.changedFields as Record<string, unknown>;
-  const allowedFields = new Set(["text", "note", "frog", "epicId", "delegateId", "schedule", "repetitive", "encryption", "parentId"]);
+  const allowedFields = new Set(["text", "note", "frog", "epicId", "schedule", "repetitive", "encryption", "parentId"]);
   if (Object.keys(source).some((key) => !allowedFields.has(key))) return null;
   const changedFields: TaskOperation["changedFields"] = {};
   if (source.text !== undefined) {
@@ -108,7 +111,7 @@ const parseOperation = (body: unknown): TaskOperation | null => {
     if (typeof source.repetitive !== "boolean") return null;
     changedFields.repetitive = source.repetitive;
   }
-  for (const key of ["epicId", "delegateId"] as const) {
+  for (const key of ["epicId"] as const) {
     if (source[key] !== undefined) {
       if (source[key] !== null && (typeof source[key] !== "string" || String(source[key]).length > 128)) return null;
       changedFields[key] = source[key] as string | null;
@@ -170,10 +173,16 @@ const parseOperation = (body: unknown): TaskOperation | null => {
     if (![tags.add, tags.remove].every((list) => Array.isArray(list) && list.length <= 100 && list.every((tag) => typeof tag === "string" && tag.length <= 100))) return null;
     operation.tagChanges = { add: tags.add as string[], remove: tags.remove as string[] };
   }
+  if (value.delegationUserId !== undefined) {
+    if (typeof value.delegationUserId !== "string" || !uuidPattern.test(value.delegationUserId)) return null;
+    operation.delegationUserId = value.delegationUserId;
+  }
   if (operation.command === "create" && !changedFields.text) return null;
   if (operation.command === "skip" && !operation.skipDate) return null;
   if (operation.command === "reorder" && !operation.ordering) return null;
   if (operation.command === "tags" && !operation.tagChanges) return null;
+  if (operation.command === "delegate-assign" && !operation.delegationUserId) return null;
+  if (operation.command !== "delegate-assign" && operation.delegationUserId) return null;
   return operation;
 };
 
@@ -343,6 +352,46 @@ export async function buildApp(options: AppOptions) {
   app.get("/api/settings", { preHandler: [requireAuth] }, async (request) =>
     options.store.getSettings(currentSession(request).user.id)
   );
+
+  const delegationOperation = (
+    body: unknown,
+    taskId: string,
+    command: "delegate-accept" | "delegate-reject"
+  ): TaskOperation | null => {
+    if (!uuidPattern.test(taskId) || !body || typeof body !== "object") return null;
+    const value = body as Record<string, unknown>;
+    if (
+      typeof value.operationId !== "string" || !uuidPattern.test(value.operationId) ||
+      typeof value.baseRevision !== "number" || !Number.isInteger(value.baseRevision) || value.baseRevision < 1
+    ) return null;
+    return {
+      operationId: value.operationId,
+      taskId,
+      deviceId: "delegation-api",
+      baseRevision: value.baseRevision,
+      command,
+      changedFields: {},
+      clientTime: new Date().toISOString()
+    };
+  };
+
+  app.get("/api/delegations/invitations", { preHandler: [requireAuth] }, async (request) => ({
+    invitations: await options.store.delegationInvites(currentSession(request).user.id)
+  }));
+
+  for (const response of ["accept", "reject"] as const) {
+    app.post(`/api/delegations/:taskId/${response}`, { preHandler: [requireAuth, requireCsrf] }, async (request, reply) => {
+      const { taskId } = request.params as { taskId: string };
+      const operation = delegationOperation(request.body, taskId, response === "accept" ? "delegate-accept" : "delegate-reject");
+      if (!operation) return reply.code(400).send({ error: "Invalid delegation response" });
+      try {
+        const result = await options.store.applyCommand(currentSession(request).user.id, operation);
+        return response === "reject" ? reply.code(204).send() : result;
+      } catch (error) {
+        return reply.code(409).send({ error: error instanceof Error ? error.message : "Delegation response rejected" });
+      }
+    });
+  }
 
   app.post("/api/delegates/resolve", { preHandler: [requireAuth, requireCsrf] }, async (request, reply) => {
     const rawEmail = request.body && typeof request.body === "object"

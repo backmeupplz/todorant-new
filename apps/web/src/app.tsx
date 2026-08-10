@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { canonicalRules, compareRanks, type Conflict, type SyncEvent, type Task } from "@todorant/domain";
+import { canonicalRules, compareRanks, type CommandResult, type Conflict, type DelegationInvite, type SyncEvent, type Task } from "@todorant/domain";
 import {
   api,
+  applyRemoteCommandResult,
   conflicts,
   connection,
   orderedTasks,
@@ -130,7 +131,8 @@ export function TaskRow({
   current,
   expanded,
   onExpand,
-  settings
+  settings,
+  currentUserId
 }: {
   task: Task;
   index: number;
@@ -139,11 +141,13 @@ export function TaskRow({
   expanded: boolean;
   onExpand: () => void;
   settings: ProductSettings;
+  currentUserId: string;
 }) {
   const [text, setText] = useState(task.encryption ? "Encrypted task" : task.text);
   const [note, setNote] = useState(task.encryption ? "" : task.note);
   const [breakdown, setBreakdown] = useState("");
   const [delegateEmail, setDelegateEmail] = useState("");
+  const [delegationError, setDelegationError] = useState("");
   const [history, setHistory] = useState<SyncEvent[] | null>(null);
   const [encryptionUnlocked, setEncryptionUnlocked] = useState(task.encryption === null);
   useEffect(() => {
@@ -241,12 +245,25 @@ export function TaskRow({
     if (!task.completedAt) await queueCommand(task.id, "complete");
   };
   const delegate = async () => {
-    const result = await api.request<{ userId: string }>("/api/delegates/resolve", {
-      method: "POST",
-      body: JSON.stringify({ email: delegateEmail })
-    });
-    await queueCommand(task.id, "update", { delegateId: result.userId });
-    setDelegateEmail("");
+    setDelegationError("");
+    try {
+      const result = await api.request<{ userId: string }>("/api/delegates/resolve", {
+        method: "POST",
+        body: JSON.stringify({ email: delegateEmail })
+      });
+      await queueCommand(task.id, "delegate-assign", {}, { delegationUserId: result.userId });
+      setDelegateEmail("");
+    } catch (error) {
+      setDelegationError(error instanceof Error ? error.message : "Unable to delegate this task");
+    }
+  };
+  const revokeDelegation = async () => {
+    setDelegationError("");
+    try {
+      await queueCommand(task.id, "delegate-revoke");
+    } catch (error) {
+      setDelegationError(error instanceof Error ? error.message : "Unable to revoke this delegation");
+    }
   };
 
   return (
@@ -359,10 +376,20 @@ export function TaskRow({
             <textarea value={breakdown} rows={2} onInput={(event) => setBreakdown(event.currentTarget.value)} />
             <button disabled={!breakdown.trim()} onClick={() => void breakDown()}>Create subtasks and complete parent</button>
           </label>
-          <label class="wide">
-            Delegate to an existing account
-            <span class="inline-fields"><input type="email" value={delegateEmail} placeholder="person@example.com" onInput={(event) => setDelegateEmail(event.currentTarget.value)} /><button disabled={!delegateEmail} onClick={() => void delegate()}>Delegate</button></span>
-          </label>
+          {task.userId === currentUserId && task.delegation && ["pending", "accepted"].includes(task.delegation.status) ? (
+            <div class="wide">
+              <p class="meta">Delegation {task.delegation.status}</p>
+              <button onClick={() => void revokeDelegation()}>Revoke delegation</button>
+            </div>
+          ) : task.userId === currentUserId ? (
+            <label class="wide">
+              Delegate to an existing account
+              <span class="inline-fields"><input type="email" value={delegateEmail} placeholder="person@example.com" onInput={(event) => setDelegateEmail(event.currentTarget.value)} /><button disabled={!delegateEmail} onClick={() => void delegate()}>Delegate</button></span>
+            </label>
+          ) : (
+            <p class="meta wide">Delegated to you · accepted</p>
+          )}
+          {delegationError && <p class="error wide" role="alert">{delegationError}</p>}
           <div class="detail-actions wide">
             <button onClick={() => void queueCommand(task.id, "update", { frog: !task.frog })}>{task.frog ? "Unmark frog" : "Mark frog"}</button>
             {!task.encryption && <button disabled={encryptionPassphrase.value.length < 12} title={encryptionPassphrase.value.length < 12 ? "Set an encryption key in Settings first" : undefined} onClick={() => void encryptTaskFields(text, note, encryptionPassphrase.value).then((fields) => queueCommand(task.id, "update", fields))}>Encrypt task</button>}
@@ -562,8 +589,36 @@ export function Workspace({ session, logout }: { session: Session; logout: () =>
   const [rulesOpen, setRulesOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [invitations, setInvitations] = useState<DelegationInvite[]>([]);
+  const [invitationError, setInvitationError] = useState("");
   const initializedDefaultExpansion = useRef(false);
   const date = productDate(settings.startTimeOfDay);
+  const refreshInvitations = async () => {
+    const result = await api.request<{ invitations: DelegationInvite[] }>("/api/delegations/invitations").catch(() => null);
+    if (result) setInvitations(result.invitations);
+  };
+  useEffect(() => {
+    void refreshInvitations();
+    const timer = window.setInterval(() => void refreshInvitations(), 10_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const respondToInvitation = async (invitation: DelegationInvite, response: "accept" | "reject") => {
+    setInvitationError("");
+    try {
+      const init = {
+        method: "POST",
+        body: JSON.stringify({ operationId: crypto.randomUUID(), baseRevision: invitation.revision })
+      };
+      if (response === "accept") {
+        await applyRemoteCommandResult(await api.request<CommandResult>(`/api/delegations/${invitation.taskId}/accept`, init));
+      } else {
+        await api.request(`/api/delegations/${invitation.taskId}/reject`, init);
+      }
+      await refreshInvitations();
+    } catch (error) {
+      setInvitationError(error instanceof Error ? error.message : "Unable to respond to this invitation");
+    }
+  };
   useEffect(() => {
     if (!initializedDefaultExpansion.current && enabled(settings, "showMoreByDefault") && orderedTasks.value[0]) {
       initializedDefaultExpansion.current = true;
@@ -654,6 +709,19 @@ export function Workspace({ session, logout }: { session: Session; logout: () =>
         {filter === "planning" && <p class="meta">Weeks start {Number(settings.firstDayOfWeek ?? 1) === 0 ? "Sunday" : Number(settings.firstDayOfWeek ?? 1) === 6 ? "Saturday" : "Monday"} · Todorant day starts {String(settings.startTimeOfDay ?? "00:00")}</p>}
         <ConflictPanel items={conflicts.value} />
         <SyncErrorPanel />
+        {invitations.length > 0 && (
+          <aside class="conflicts" aria-label="Delegation invitations">
+            <strong>Delegation invitations</strong>
+            {invitations.map((invitation) => (
+              <div key={invitation.taskId}>
+                <span>{invitation.ownerEmail} invited you to collaborate on a task.</span>
+                <button onClick={() => void respondToInvitation(invitation, "accept")}>Accept</button>
+                <button onClick={() => void respondToInvitation(invitation, "reject")}>Reject</button>
+              </div>
+            ))}
+            {invitationError && <p class="error" role="alert">{invitationError}</p>}
+          </aside>
+        )}
         {filter === "epics" && <EpicSummary all={orderedTasks.value} settings={session.settings} />}
         {filter === "reports" ? <ReportPanel all={orderedTasks.value} /> : list.length ? (
           <ul class="task-list">
@@ -661,7 +729,7 @@ export function Workspace({ session, logout }: { session: Session; logout: () =>
               filter === "trash" ? (
                 <li class="task trash-row" key={task.id}><span>{task.text}</span><button onClick={() => void queueCommand(task.id, "restore")}>Restore</button></li>
               ) : (
-                <TaskRow key={task.id} task={task} index={index} all={list} current={filter === "today" && index === 0 && !task.completedAt} expanded={expanded === task.id} onExpand={() => setExpanded(expanded === task.id ? null : task.id)} settings={settings} />
+                <TaskRow key={task.id} task={task} index={index} all={list} current={filter === "today" && index === 0 && !task.completedAt} expanded={expanded === task.id} onExpand={() => setExpanded(expanded === task.id ? null : task.id)} settings={settings} currentUserId={session.user.id} />
               )
             )}
           </ul>

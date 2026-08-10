@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, or, sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
-import type { CommandResult, SyncEvent, TaskOperation } from "@todorant/domain";
+import type { CommandResult, DelegationInvite, SyncEvent, TaskOperation } from "@todorant/domain";
 import { applyOperation, changedFieldsFor } from "./sync.js";
 import * as schema from "./schema.js";
 import type {
@@ -118,18 +118,39 @@ export class PostgresDataStore implements DataStore {
         };
       }
 
-      const [taskRow] = await tx
+      const [candidate] = await tx
         .select()
         .from(schema.tasks)
-        .where(
-          and(
-            eq(schema.tasks.id, operation.taskId),
-            or(eq(schema.tasks.userId, userId), eq(schema.tasks.delegateId, userId))
-          )
-        )
+        .where(eq(schema.tasks.id, operation.taskId))
         .limit(1);
+      const responding = operation.command === "delegate-accept" || operation.command === "delegate-reject";
+      const taskRow = candidate && (
+        candidate.userId === userId || candidate.delegateId === userId ||
+        (responding && candidate.pendingDelegateId === userId)
+      ) ? candidate : undefined;
+      if (candidate && !taskRow) throw new Error("Task not found");
       if (taskRow && operation.baseRevision > taskRow.revision) {
         throw new Error("Base revision is ahead of the canonical task");
+      }
+      if (taskRow && ["delegate-assign", "delegate-revoke"].includes(operation.command) && taskRow.userId !== userId) {
+        throw new Error("Only the owner can change delegation");
+      }
+      if (taskRow && responding && taskRow.pendingDelegateId !== userId) {
+        throw new Error("Delegation invitation not found");
+      }
+      if (operation.command === "delegate-assign") {
+        if (!operation.delegationUserId || operation.delegationUserId === userId) {
+          throw new Error("That delegate account is not available");
+        }
+        const [delegate] = await tx
+          .select({ id: schema.users.id })
+          .from(schema.users)
+          .where(eq(schema.users.id, operation.delegationUserId))
+          .limit(1);
+        if (!delegate) throw new Error("That delegate account is not available");
+        if (taskRow?.state.delegation && ["pending", "accepted"].includes(taskRow.state.delegation.status)) {
+          throw new Error("Revoke the current delegation first");
+        }
       }
       if (taskRow && taskRow.userId !== userId && operation.changedFields.delegateId !== undefined) {
         throw new Error("Only the owner can change delegation");
@@ -140,7 +161,7 @@ export class PostgresDataStore implements DataStore {
             .from(schema.taskEvents)
             .where(
               and(
-                or(eq(schema.taskEvents.userId, userId), eq(schema.taskEvents.delegateId, userId)),
+                eq(schema.taskEvents.userId, taskRow.userId),
                 eq(schema.taskEvents.taskId, operation.taskId),
                 gt(schema.taskEvents.revision, operation.baseRevision)
               )
@@ -179,6 +200,7 @@ export class PostgresDataStore implements DataStore {
           id: task.id,
           userId: task.userId,
           delegateId: task.delegateId,
+          pendingDelegateId: task.delegation?.status === "pending" ? task.delegation.delegateId : null,
           revision: task.revision,
           rank: task.rank,
           deleted: task.deletedAt !== null,
@@ -190,6 +212,7 @@ export class PostgresDataStore implements DataStore {
             revision: task.revision,
             rank: task.rank,
             delegateId: task.delegateId,
+            pendingDelegateId: task.delegation?.status === "pending" ? task.delegation.delegateId : null,
             deleted: task.deletedAt !== null,
             state: task,
             updatedAt: new Date()
@@ -238,6 +261,26 @@ export class PostgresDataStore implements DataStore {
       }
     }
     return result;
+  }
+
+  async delegationInvites(userId: string): Promise<DelegationInvite[]> {
+    const rows = await this.db
+      .select({
+        taskId: schema.tasks.id,
+        revision: schema.tasks.revision,
+        state: schema.tasks.state,
+        ownerEmail: schema.users.email
+      })
+      .from(schema.tasks)
+      .innerJoin(schema.users, eq(schema.tasks.userId, schema.users.id))
+      .where(eq(schema.tasks.pendingDelegateId, userId))
+      .orderBy(desc(schema.tasks.updatedAt));
+    return rows.map((row) => ({
+      taskId: row.taskId,
+      revision: row.revision,
+      ownerEmail: row.ownerEmail,
+      assignedAt: row.state.delegation?.updatedAt ?? row.state.updatedAt
+    }));
   }
 
   async history(userId: string, taskId: string): Promise<SyncEvent[]> {

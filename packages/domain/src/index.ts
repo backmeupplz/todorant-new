@@ -7,6 +7,21 @@ export type TaskSchedule = {
   timezone: string | null;
 };
 
+export type DelegationStatus = "pending" | "accepted" | "rejected" | "revoked";
+
+export type TaskDelegation = {
+  delegateId: string;
+  status: DelegationStatus;
+  updatedAt: string;
+};
+
+export type DelegationInvite = {
+  taskId: string;
+  revision: number;
+  ownerEmail: string;
+  assignedAt: string;
+};
+
 export type Task = {
   id: string;
   userId: string;
@@ -24,6 +39,7 @@ export type Task = {
   rank: string;
   ownerId: string;
   delegateId: string | null;
+  delegation: TaskDelegation | null;
   legacyDelegation: { userId: string; delegatorId: string | null; accepted: boolean | null } | null;
   encryption: { algorithm: string; keyId: string } | null;
   parentId: string | null;
@@ -42,6 +58,7 @@ export type MutableTaskField =
   | "frogFails"
   | "skippedDates"
   | "delegateId"
+  | "delegation"
   | "legacyDelegation"
   | "encryption"
   | "parentId";
@@ -55,7 +72,11 @@ export type SemanticCommand =
   | "delete"
   | "restore"
   | "reorder"
-  | "tags";
+  | "tags"
+  | "delegate-assign"
+  | "delegate-accept"
+  | "delegate-reject"
+  | "delegate-revoke";
 
 export type TaskOperation = {
   operationId: string;
@@ -65,6 +86,7 @@ export type TaskOperation = {
   command: SemanticCommand;
   changedFields: Partial<Pick<Task, MutableTaskField>>;
   tagChanges?: { add: string[]; remove: string[] };
+  delegationUserId?: string;
   skipDate?: string;
   ordering?: { beforeId: string | null; afterId: string | null };
   clientTime: string;
@@ -104,6 +126,7 @@ export const taskFieldGroups: Record<MutableTaskField, string> = {
   frogFails: "frogFails",
   skippedDates: "skippedDates",
   delegateId: "delegateId",
+  delegation: "delegation",
   legacyDelegation: "legacyDelegation",
   encryption: "encryption",
   parentId: "parentId"
@@ -137,7 +160,11 @@ export function touchedFields(operation: TaskOperation): string[] {
     delete: ["deletedAt"],
     restore: ["deletedAt"],
     reorder: ["rank"],
-    tags: ["tags"]
+    tags: ["tags"],
+    "delegate-assign": ["delegateId", "delegation"],
+    "delegate-accept": ["delegateId", "delegation"],
+    "delegate-reject": ["delegateId", "delegation"],
+    "delegate-revoke": ["delegateId", "delegation"]
   };
   return [
     ...Object.keys(operation.changedFields),

@@ -323,17 +323,34 @@ export class MigrationService {
     currentLegacyUserId: string,
     linkedUsers: Map<string, string>
   ): Promise<void> {
-    const snapshot = await this.store.snapshot(userId, 0);
-    const current = snapshot.tasks.find((task) => task.id === record.importedId);
     const payload = record.payload;
     const text = String(payload.text ?? "Imported task");
     const tags = payload.encrypted === true ? [] : tagsFromText(text);
     const epicId = tags.map((tag) => epics.get(tag.toLocaleLowerCase())).find(Boolean) ?? null;
     const schedule = legacySchedule(payload);
-    const legacyOwnerId = String(payload.user ?? "");
+    // In legacy Todorant, `delegator` is the assigning owner and `user` is the
+    // assignee. For ordinary tasks `user` is also the owner. Import against the
+    // real owner's vNext account so an assignee-side import cannot reverse roles.
+    const legacyAssigneeId = String(payload.user ?? "");
     const legacyDelegatorId = String(payload.delegator ?? "");
-    const counterpartyLegacyId = legacyOwnerId === currentLegacyUserId ? legacyDelegatorId : legacyOwnerId;
-    const delegateId = counterpartyLegacyId ? linkedUsers.get(counterpartyLegacyId) ?? null : null;
+    const legacyTaskOwnerId = legacyDelegatorId || legacyAssigneeId;
+    const ownerUserId = linkedUsers.get(legacyTaskOwnerId) ?? (
+      legacyTaskOwnerId === currentLegacyUserId ? userId : null
+    );
+    if (!ownerUserId) return;
+    const assigneeUserId = linkedUsers.get(legacyAssigneeId) ?? (
+      legacyAssigneeId === currentLegacyUserId ? userId : null
+    );
+    const accepted = payload.delegateAccepted === true;
+    const delegation = legacyDelegatorId && assigneeUserId
+      ? {
+          delegateId: assigneeUserId,
+          status: accepted ? "accepted" as const : "pending" as const,
+          updatedAt: typeof payload.updatedAt === "string" ? payload.updatedAt : new Date().toISOString()
+        }
+      : null;
+    const snapshot = await this.store.snapshot(ownerUserId, 0);
+    const current = snapshot.tasks.find((task) => task.id === record.importedId);
     const changedFields: TaskOperation["changedFields"] = {
       text,
       note: "",
@@ -341,7 +358,8 @@ export class MigrationService {
       frogFails: Number.isInteger(payload.frogFails) ? Number(payload.frogFails) : 0,
       repetitive: Boolean(payload.repetitive),
       epicId,
-      delegateId,
+      delegateId: accepted ? assigneeUserId : null,
+      delegation,
       legacyDelegation: payload.delegator
         ? {
             userId: String(payload.user),
@@ -354,8 +372,8 @@ export class MigrationService {
       encryption: payload.encrypted === true ? { algorithm: "legacy-aes", keyId: "legacy-password" } : null,
       parentId: null
     };
-    let result = await this.store.applyCommand(userId, {
-      operationId: stableUuid(`${userId}:${record.legacyId}:${record.checksum}`),
+    let result = await this.store.applyCommand(ownerUserId, {
+      operationId: stableUuid(`${ownerUserId}:${record.legacyId}:${record.checksum}`),
       taskId: record.importedId,
       deviceId: "legacy-import",
       baseRevision: current?.revision ?? 0,
@@ -364,8 +382,8 @@ export class MigrationService {
       clientTime: new Date().toISOString()
     });
     if (tags.length) {
-      result = await this.store.applyCommand(userId, {
-        operationId: stableUuid(`${userId}:${record.legacyId}:${record.checksum}:tags`),
+      result = await this.store.applyCommand(ownerUserId, {
+        operationId: stableUuid(`${ownerUserId}:${record.legacyId}:${record.checksum}:tags`),
         taskId: record.importedId,
         deviceId: "legacy-import",
         baseRevision: result.task.revision,
@@ -376,8 +394,8 @@ export class MigrationService {
       });
     }
     if (payload.completed === true && !result.task.completedAt) {
-      result = await this.store.applyCommand(userId, {
-        operationId: stableUuid(`${userId}:${record.legacyId}:${record.checksum}:complete`),
+      result = await this.store.applyCommand(ownerUserId, {
+        operationId: stableUuid(`${ownerUserId}:${record.legacyId}:${record.checksum}:complete`),
         taskId: record.importedId,
         deviceId: "legacy-import",
         baseRevision: result.task.revision,
@@ -387,8 +405,8 @@ export class MigrationService {
       });
     }
     if (payload.deleted === true && !result.task.deletedAt) {
-      await this.store.applyCommand(userId, {
-        operationId: stableUuid(`${userId}:${record.legacyId}:${record.checksum}:delete`),
+      await this.store.applyCommand(ownerUserId, {
+        operationId: stableUuid(`${ownerUserId}:${record.legacyId}:${record.checksum}:delete`),
         taskId: record.importedId,
         deviceId: "legacy-import",
         baseRevision: result.task.revision,

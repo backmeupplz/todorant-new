@@ -153,6 +153,7 @@ export const optimisticTask = (current: Task | undefined, operation: TaskOperati
         rank: rankBetween(tailRank, null),
         ownerId: activeUser,
         delegateId: operation.changedFields.delegateId ?? null,
+        delegation: operation.changedFields.delegation ?? null,
         legacyDelegation: operation.changedFields.legacyDelegation ?? null,
         encryption: operation.changedFields.encryption ?? null,
         parentId: operation.changedFields.parentId ?? null,
@@ -183,6 +184,20 @@ export const optimisticTask = (current: Task | undefined, operation: TaskOperati
       ? tasks.value.find((item) => item.id === operation.ordering?.beforeId)?.rank ?? null
       : null;
     task = { ...task, rank: rankBetween(lower, upper) };
+  }
+  if (operation.command === "delegate-assign" && operation.delegationUserId) {
+    task = {
+      ...task,
+      delegateId: null,
+      delegation: { delegateId: operation.delegationUserId, status: "pending", updatedAt: now }
+    };
+  }
+  if (operation.command === "delegate-revoke" && task.delegation) {
+    task = {
+      ...task,
+      delegateId: null,
+      delegation: { ...task.delegation, status: "revoked", updatedAt: now }
+    };
   }
   return task;
 };
@@ -220,34 +235,51 @@ export async function queueCommand(
   taskId: string,
   command: TaskOperation["command"],
   changedFields: TaskOperation["changedFields"] = {},
-  extras: Pick<TaskOperation, "ordering" | "skipDate" | "tagChanges"> = {}
+  extras: Pick<TaskOperation, "ordering" | "skipDate" | "tagChanges" | "delegationUserId"> = {}
 ): Promise<void> {
-  const current = tasks.value.find((task) => task.id === taskId);
-  const operation: PendingOperation = {
-    operationId: crypto.randomUUID(),
-    taskId,
-    deviceId: await identity(),
-    baseRevision: current?.revision ?? 0,
-    command,
-    changedFields,
-    clientTime: new Date().toISOString(),
-    queuedAt: new Date().toISOString(),
-    status: "queued",
-    ...extras
-  };
-  const db = await localDb();
-  const transaction = db.transaction(["tasks", "operations"], "readwrite");
-  const task = optimisticTask(current, operation);
-  await Promise.all([transaction.objectStore("tasks").put(task), transaction.objectStore("operations").put(operation)]);
-  await transaction.done;
-  tasks.value = [...tasks.value.filter((item) => item.id !== task.id), task];
-  pendingCount.value += 1;
+  await serializeReconciliation(async () => {
+    // Identity lookup and the IndexedDB read/write transaction are deliberately
+    // inside the same serialized section. Every rapid edit therefore derives
+    // from the latest persisted optimistic revision, rather than a stale signal.
+    const deviceId = await identity();
+    const db = await localDb();
+    const transaction = db.transaction(["tasks", "operations"], "readwrite");
+    const taskStore = transaction.objectStore("tasks");
+    const operationStore = transaction.objectStore("operations");
+    const current = await taskStore.get(taskId);
+    const timestamp = new Date().toISOString();
+    const latestQueued = await operationStore.index("queuedAt").openCursor(undefined, "prev");
+    const queuedAt = latestQueued && latestQueued.value.queuedAt >= timestamp
+      ? new Date(Date.parse(latestQueued.value.queuedAt) + 1).toISOString()
+      : timestamp;
+    const operation: PendingOperation = {
+      operationId: crypto.randomUUID(),
+      taskId,
+      deviceId,
+      baseRevision: current?.revision ?? 0,
+      command,
+      changedFields,
+      clientTime: timestamp,
+      queuedAt,
+      status: "queued",
+      ...extras
+    };
+    const task = optimisticTask(current, operation);
+    await Promise.all([
+      taskStore.put(task),
+      operationStore.put(operation)
+    ]);
+    await transaction.done;
+    tasks.value = [...tasks.value.filter((item) => item.id !== task.id), task];
+    pendingCount.value = await db.count("operations");
+  });
   void flush();
 }
 
 export async function flush(): Promise<void> {
   if (flushing || !activeUser || !navigator.onLine) return;
   flushing = true;
+  let continueFlushing = false;
   connection.value = "syncing";
   try {
     const db = await localDb();
@@ -282,11 +314,13 @@ export async function flush(): Promise<void> {
     pendingCount.value = (await db.count("operations"));
     syncErrors.value = (await db.getAll("operations")).filter((operation) => operation.status === "failed");
     if (pendingCount.value === 0) await serializeReconciliation(() => pull());
+    continueFlushing = pendingCount.value > 0 && syncErrors.value.length === 0 && connection.value !== "offline";
     connection.value = websocket?.readyState === WebSocket.OPEN ? "live" : "offline";
   } catch {
     connection.value = "offline";
   } finally {
     flushing = false;
+    if (continueFlushing) queueMicrotask(() => void flush());
   }
 }
 
@@ -313,6 +347,14 @@ export async function pull(force = false): Promise<void> {
   const localCursor = await cursor();
   const snapshot = await request<Snapshot>(`/api/snapshot?cursor=${localCursor}`);
   await applySnapshot(snapshot, force);
+}
+
+export async function applyRemoteCommandResult(result: CommandResult): Promise<void> {
+  await serializeReconciliation(async () => {
+    await saveTask(result.task, true);
+    await saveConflict(result.conflict);
+    await setCursor(result.cursor);
+  });
 }
 
 const connect = async () => {
@@ -367,10 +409,11 @@ export async function stopSync(): Promise<void> {
 
 export async function resolveConflict(conflict: Conflict, restoreMine: boolean): Promise<void> {
   if (restoreMine) {
-    const extras: Pick<TaskOperation, "ordering" | "skipDate" | "tagChanges"> = {};
+    const extras: Pick<TaskOperation, "ordering" | "skipDate" | "tagChanges" | "delegationUserId"> = {};
     if (conflict.mine.ordering) extras.ordering = conflict.mine.ordering;
     if (conflict.mine.skipDate) extras.skipDate = conflict.mine.skipDate;
     if (conflict.mine.tagChanges) extras.tagChanges = conflict.mine.tagChanges;
+    if (conflict.mine.delegationUserId) extras.delegationUserId = conflict.mine.delegationUserId;
     await queueCommand(conflict.taskId, conflict.mine.command, conflict.mine.changedFields, extras);
   }
   const db = await localDb();

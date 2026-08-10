@@ -44,6 +44,7 @@ export const tasks = pgTable(
     id: uuid("id").notNull(),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     delegateId: uuid("delegate_id").references(() => users.id, { onDelete: "set null" }),
+    pendingDelegateId: uuid("pending_delegate_id").references(() => users.id, { onDelete: "set null" }),
     revision: integer("revision").notNull(),
     rank: text("rank").notNull(),
     deleted: boolean("deleted").notNull().default(false),
@@ -53,7 +54,8 @@ export const tasks = pgTable(
   (table) => [
     primaryKey({ columns: [table.userId, table.id] }),
     index("tasks_user_rank_idx").on(table.userId, table.rank),
-    index("tasks_delegate_rank_idx").on(table.delegateId, table.rank)
+    index("tasks_delegate_rank_idx").on(table.delegateId, table.rank),
+    index("tasks_pending_delegate_idx").on(table.pendingDelegateId)
   ]
 );
 

@@ -9,7 +9,7 @@ import {
   setCursor,
   type PendingOperation
 } from "./db.js";
-import { api, applyEvent, applySnapshot, canAccessTask, conflicts, isRetryableFailure, optimisticTask, pendingCount, RequestFailure, tasks } from "./sync.js";
+import { api, applyEvent, applySnapshot, canAccessTask, conflicts, isRetryableFailure, optimisticTask, pendingCount, queueCommand, RequestFailure, tasks } from "./sync.js";
 
 const operation = (
   operationId: string,
@@ -75,6 +75,39 @@ describe("per-user IndexedDB replica", () => {
     });
     expect(compareRanks(moved.rank, first.rank)).toBeLessThan(0);
     expect(moved.revision).toBe(second.revision + 1);
+  });
+
+  it("serializes simultaneous edits through persisted optimistic revisions", async () => {
+    await activateLocalUser("00000000-0000-4000-8000-000000000230");
+    const db = await localDb();
+    const created = optimisticTask(undefined, operation(
+      "00000000-0000-4000-8000-000000000231",
+      0,
+      { text: "Concurrent edit" },
+      "create"
+    ));
+    await db.put("tasks", created);
+    tasks.value = [created];
+
+    await Promise.all([
+      queueCommand(created.id, "update", { note: "Retained note" }),
+      queueCommand(created.id, "update", { epicId: "Retained epic" }),
+      queueCommand(created.id, "update", {
+        schedule: { ...created.schedule, time: "09:45" }
+      })
+    ]);
+
+    const persisted = await db.get("tasks", created.id);
+    const queued = await db.getAllFromIndex("operations", "queuedAt");
+    expect(queued.map((item) => item.baseRevision)).toEqual([1, 2, 3]);
+    expect(new Set(queued.map((item) => item.queuedAt)).size).toBe(3);
+    expect(persisted).toMatchObject({
+      revision: 4,
+      note: "Retained note",
+      epicId: "Retained epic",
+      schedule: { time: "09:45" }
+    });
+    expect(tasks.value[0]).toMatchObject({ revision: 4, note: "Retained note", epicId: "Retained epic" });
   });
 
   it("removes access when an owner revokes delegation", () => {

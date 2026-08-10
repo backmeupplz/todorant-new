@@ -140,6 +140,69 @@ describe("multi-client synchronization", () => {
     ).rejects.toThrow("Frog tasks cannot be skipped");
   });
 
+  it("keeps invitations private through assign, reject, accept, and revoke", async () => {
+    const store = new MemoryDataStore();
+    const owner = await store.createUser("owner@example.com", "hash");
+    const delegate = await store.createUser("delegate@example.com", "hash");
+    const created = await store.applyCommand(owner.id, op(
+      "00000000-0000-4000-8000-000000000040",
+      0,
+      { text: "Private until accepted" },
+      "create"
+    ));
+    const lifecycle = (
+      operationId: string,
+      baseRevision: number,
+      command: TaskOperation["command"],
+      delegationUserId?: string
+    ): TaskOperation => ({
+      ...op(operationId, baseRevision, {}, command),
+      ...(delegationUserId ? { delegationUserId } : {})
+    });
+
+    const pending = await store.applyCommand(owner.id, lifecycle(
+      "00000000-0000-4000-8000-000000000041",
+      created.task.revision,
+      "delegate-assign",
+      delegate.id
+    ));
+    expect(pending.task).toMatchObject({ delegateId: null, delegation: { status: "pending" } });
+    expect((await store.snapshot(delegate.id, 0)).tasks).toHaveLength(0);
+    expect(await store.history(delegate.id, created.task.id)).toEqual([]);
+    expect(await store.delegationInvites(delegate.id)).toMatchObject([{ ownerEmail: "owner@example.com" }]);
+
+    const rejected = await store.applyCommand(delegate.id, lifecycle(
+      "00000000-0000-4000-8000-000000000042",
+      pending.task.revision,
+      "delegate-reject"
+    ));
+    expect(rejected.task).toMatchObject({ delegateId: null, delegation: { status: "rejected" } });
+    expect(await store.delegationInvites(delegate.id)).toEqual([]);
+
+    const reassigned = await store.applyCommand(owner.id, lifecycle(
+      "00000000-0000-4000-8000-000000000043",
+      rejected.task.revision,
+      "delegate-assign",
+      delegate.id
+    ));
+    const accepted = await store.applyCommand(delegate.id, lifecycle(
+      "00000000-0000-4000-8000-000000000044",
+      reassigned.task.revision,
+      "delegate-accept"
+    ));
+    expect(accepted.task).toMatchObject({ delegateId: delegate.id, delegation: { status: "accepted" } });
+    expect((await store.snapshot(delegate.id, 0)).tasks).toHaveLength(1);
+
+    const revoked = await store.applyCommand(owner.id, lifecycle(
+      "00000000-0000-4000-8000-000000000045",
+      accepted.task.revision,
+      "delegate-revoke"
+    ));
+    expect(revoked.task).toMatchObject({ delegateId: null, delegation: { status: "revoked" } });
+    expect((await store.snapshot(delegate.id, 0)).tasks).toHaveLength(0);
+    expect(await store.history(delegate.id, created.task.id)).toEqual([]);
+  });
+
   it("turns a task into a frog after two overdue redistributions", async () => {
     const store = new MemoryDataStore();
     const created = await store.applyCommand(
