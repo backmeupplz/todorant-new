@@ -4,8 +4,6 @@ set -eu
 engine=${CONTAINER_ENGINE:-podman}
 container="todorant-postgres-integration-$$"
 mongo_container="todorant-mongo-integration-$$"
-pg_port=55432
-mongo_port=55433
 image="docker.io/library/postgres:18.4-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15"
 mongo_image="docker.io/library/mongo:8.0.14-noble@sha256:877fa303326645cd0e50a3833fce2f3c03d6eb4aac82c97a02e98879f51126d3"
 
@@ -19,14 +17,25 @@ trap cleanup EXIT INT TERM
   -e POSTGRES_DB=todorant_test \
   -e POSTGRES_USER=todorant \
   -e POSTGRES_PASSWORD=todorant \
-  -p "$pg_port:5432" \
+  -p "127.0.0.1::5432" \
   "$image" >/dev/null
 
 "$engine" run --name "$mongo_container" --rm -d \
   -e MONGO_INITDB_ROOT_USERNAME=root \
   -e MONGO_INITDB_ROOT_PASSWORD=fixture-root-password \
-  -p "$mongo_port:27017" \
+  -p "127.0.0.1::27017" \
   "$mongo_image" >/dev/null
+
+published_port() {
+  "$engine" port "$1" "$2/tcp" | sed -n 's/.*://p' | tail -n 1
+}
+
+pg_port=$(published_port "$container" 5432)
+mongo_port=$(published_port "$mongo_container" 27017)
+if [ -z "$pg_port" ] || [ -z "$mongo_port" ]; then
+  echo "Failed to resolve dynamically published integration ports" >&2
+  exit 1
+fi
 
 attempt=0
 until "$engine" exec "$container" pg_isready -U todorant -d todorant_test >/dev/null 2>&1; do
