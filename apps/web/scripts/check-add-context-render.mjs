@@ -109,6 +109,7 @@ try {
 
   try {
     await page.send("Page.enable");
+    await page.send("Emulation.setDeviceMetricsOverride", { width: 1000, height: 900, deviceScaleFactor: 1, mobile: false });
     await page.send("Page.navigate", { url });
     for (let attempt = 0; attempt < 100; attempt += 1) {
       const readiness = await page.send("Runtime.evaluate", { expression: "document.readyState", returnByValue: true });
@@ -143,6 +144,31 @@ try {
         console.log(`${snapshot.theme} ${control.state} Planning control: ${control.width} × ${control.height}, ${controlRatio.toFixed(2)}:1`);
       }
     }
+    const measureTaskRow = async (label, width, height, mobile) => {
+      await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
+      const measured = await page.send("Runtime.evaluate", {
+        expression: "window.taskRowSnapshot()",
+        returnByValue: true
+      });
+      const snapshot = measured.result.value;
+      if (snapshot.actions.display !== "flex" || snapshot.buttons.length !== 4) {
+        throw new Error(`${label} task actions are not always exposed (${snapshot.actions.display}, ${snapshot.buttons.length} buttons)`);
+      }
+      if (snapshot.row.scrollWidth > snapshot.row.clientWidth || snapshot.row.right > snapshot.viewportWidth) {
+        throw new Error(`${label} task row overflows (${snapshot.row.scrollWidth}/${snapshot.row.clientWidth}, right ${snapshot.row.right}/${snapshot.viewportWidth})`);
+      }
+      if (snapshot.title.right > snapshot.actions.left || snapshot.title.overflow !== "ellipsis") {
+        throw new Error(`${label} task title does not truncate before actions (${snapshot.title.right}/${snapshot.actions.left}, ${snapshot.title.overflow})`);
+      }
+      for (const action of snapshot.buttons) {
+        if (action.display === "none" || action.width < 44 || action.height < 44 || !action.title || !action.label) {
+          throw new Error(`${label} task action fails discoverability geometry: ${JSON.stringify(action)}`);
+        }
+      }
+      console.log(`${label} task row: ${snapshot.row.width}px, title ${snapshot.title.width}px, ${snapshot.buttons.length} exposed 44px actions`);
+    };
+    await measureTaskRow("desktop", 1000, 900, false);
+    await measureTaskRow("390×844 mobile", 390, 844, true);
   } finally {
     page.close();
   }
