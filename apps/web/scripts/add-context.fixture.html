@@ -29,6 +29,24 @@
         </summary>
       </details>
     </div>
+    <main class="workspace row-geometry-fixture">
+      <ul class="task-list">
+        <li class="task">
+          <div class="task-main">
+            <button class="check" aria-label="Complete long task title" type="button"><span class="check-visual" aria-hidden="true"></span></button>
+            <button class="task-title" aria-label="Edit long task title" type="button">A deliberately long task title that must truncate before its direct actions</button>
+            <span class="badge">current</span>
+            <time class="date">2099-12-31</time>
+            <div class="task-actions" role="toolbar" aria-label="Actions for long task title">
+              <button class="icon-button task-action" aria-label="Edit long task title" title="Edit task" type="button"><svg class="icon" aria-hidden="true" viewBox="0 0 20 20"><path d="M4 16 16 4" /></svg></button>
+              <button class="icon-button task-action" aria-label="Move long task title to today" title="Move to today" type="button"><svg class="icon" aria-hidden="true" viewBox="0 0 20 20"><path d="M4 10h12" /></svg></button>
+              <button class="icon-button task-action" aria-label="Break down long task title" title="Break down task" type="button"><svg class="icon" aria-hidden="true" viewBox="0 0 20 20"><path d="M4 5h12M10 5v10" /></svg></button>
+              <button class="icon-button task-action danger" aria-label="Delete long task title" title="Delete task" type="button"><svg class="icon" aria-hidden="true" viewBox="0 0 20 20"><path d="M5 6h10M7 6v10h6V6" /></svg></button>
+            </div>
+          </div>
+        </li>
+      </ul>
+    </main>
     <pre id="computed-styles"></pre>
     <script>
       const button = document.querySelector(".planning-header .add-context");
@@ -56,6 +74,24 @@
           accent: resolveColor(rootStyles.getPropertyValue("--accent")),
           surface: resolveColor(rootStyles.getPropertyValue("--surface")),
           controls
+        };
+      };
+      window.taskRowSnapshot = () => {
+        const main = document.querySelector(".row-geometry-fixture .task-main");
+        const title = main.querySelector(".task-title");
+        const actions = main.querySelector(".task-actions");
+        const rect = main.getBoundingClientRect();
+        const titleRect = title.getBoundingClientRect();
+        const actionRect = actions.getBoundingClientRect();
+        return {
+          viewportWidth: document.documentElement.clientWidth,
+          row: { left: rect.left, right: rect.right, width: rect.width, clientWidth: main.clientWidth, scrollWidth: main.scrollWidth },
+          title: { left: titleRect.left, right: titleRect.right, width: titleRect.width, overflow: getComputedStyle(title).textOverflow },
+          actions: { left: actionRect.left, right: actionRect.right, display: getComputedStyle(actions).display },
+          buttons: [...actions.querySelectorAll("button")].map((action) => {
+            const actionRect = action.getBoundingClientRect();
+            return { height: actionRect.height, width: actionRect.width, display: getComputedStyle(action).display, title: action.title, label: action.getAttribute("aria-label") };
+          })
         };
       };
       output.textContent = JSON.stringify([snapshot("light"), snapshot("dark")]);

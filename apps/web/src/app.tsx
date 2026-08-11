@@ -29,7 +29,7 @@ type ProductSettings = Record<string, unknown>;
 
 const enabled = (settings: ProductSettings, key: string): boolean => settings[key] === true;
 
-type IconName = "calendar" | "check" | "close" | "focus" | "lock" | "more" | "plus" | "repeat" | "search" | "skip" | "view";
+type IconName = "breakdown" | "calendar" | "check" | "close" | "edit" | "focus" | "lock" | "more" | "plus" | "repeat" | "search" | "skip" | "trash" | "view";
 
 export const compactControlGeometry = { hitTargetPx: 44, chromeInsetPx: 5, visualHeightPx: 34 } as const;
 
@@ -50,9 +50,11 @@ export const editorSaveStatus = ({ connectionState, queued, hasConflict, hasErro
 
 export function Icon({ name }: { name: IconName }) {
   const paths: Record<IconName, JSX.Element> = {
+    breakdown: <><circle cx="5" cy="5" r="2" /><circle cx="15" cy="5" r="2" /><circle cx="10" cy="15" r="2" /><path d="M7 5h3a3 3 0 0 1 3 3v1M13 5h-3a3 3 0 0 0-3 3v1M7 9v1a5 5 0 0 0 3 5" /></>,
     calendar: <><rect x="3" y="4.5" width="14" height="13" rx="2" /><path d="M6.5 2.5v4M13.5 2.5v4M3 8.5h14" /></>,
     check: <path d="m5 10.5 3.2 3L15 6.5" />,
     close: <path d="m5 5 10 10M15 5 5 15" />,
+    edit: <><path d="m12.5 4.5 3 3L8 15l-4 1 1-4 7.5-7.5Z" /><path d="m10.5 6.5 3 3" /></>,
     focus: <><circle cx="10" cy="10" r="6.5" /><circle cx="10" cy="10" r="2" /></>,
     lock: <><rect x="4" y="8.5" width="12" height="9" rx="2" /><path d="M6.5 8.5V6a3.5 3.5 0 0 1 7 0v2.5" /></>,
     more: <><circle cx="4" cy="10" r="1" fill="currentColor" stroke="none" /><circle cx="10" cy="10" r="1" fill="currentColor" stroke="none" /><circle cx="16" cy="10" r="1" fill="currentColor" stroke="none" /></>,
@@ -60,6 +62,7 @@ export function Icon({ name }: { name: IconName }) {
     repeat: <><path d="M15.5 7A6 6 0 0 0 5 5.5L3 7.5" /><path d="M3 4.5v3h3M4.5 13A6 6 0 0 0 15 14.5l2-2" /><path d="M17 15.5v-3h-3" /></>,
     search: <><circle cx="8.5" cy="8.5" r="5" /><path d="m12.2 12.2 4.3 4.3" /></>,
     skip: <><path d="m5 5 7 5-7 5V5Z" /><path d="M15 5v10" /></>,
+    trash: <><path d="M4 6h12M8 3.5h4l1 2.5M6 6l.7 11h6.6L14 6M8.5 9v5M11.5 9v5" /></>,
     view: <><path d="M3 5.5h14M3 10h14M3 14.5h14" /><circle cx="7" cy="5.5" r="1.5" fill="var(--surface)" /><circle cx="13" cy="10" r="1.5" fill="var(--surface)" /><circle cx="8.5" cy="14.5" r="1.5" fill="var(--surface)" /></>
   };
   return <svg class="icon" aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">{paths[name]}</svg>;
@@ -151,6 +154,28 @@ export const isActionableOn = (task: Task, date: string): boolean =>
     task.schedule.date ? task.schedule.date <= date : task.schedule.month === null
   );
 
+export const taskRowActionAvailability = (
+  task: Task,
+  view: "current" | "planning" | "other",
+  date: string
+): { breakdown: boolean; moveToToday: boolean; skip: boolean } => ({
+  breakdown: task.completedAt === null,
+  moveToToday: view === "planning" && task.completedAt === null && (
+    task.schedule.date ? task.schedule.date > date : Boolean(task.schedule.month && task.schedule.month > date.slice(0, 7))
+  ),
+  skip: view === "current" && task.completedAt === null && !task.frog && isActionableOn(task, date)
+});
+
+export const deleteTaskAfterConfirmation = async (
+  taskText: string,
+  queueTombstone: () => Promise<unknown>,
+  confirmDelete: (message: string) => boolean = (message) => window.confirm(message)
+): Promise<boolean> => {
+  if (!confirmDelete(`Delete “${taskText}”? The task will move to Trash.`)) return false;
+  await queueTombstone();
+  return true;
+};
+
 export const requiresPlanningOn = (task: Task, date: string): boolean =>
   !task.deletedAt && !task.completedAt && (
     task.schedule.date ? task.schedule.date < date : Boolean(task.schedule.month && task.schedule.month <= date.slice(0, 7))
@@ -225,8 +250,17 @@ export function TaskRow({
   const [history, setHistory] = useState<SyncEvent[] | null>(null);
   const [encryptionUnlocked, setEncryptionUnlocked] = useState(task.encryption === null);
   const editor = useRef<HTMLDialogElement>(null);
+  const breakdownDisclosure = useRef<HTMLDetailsElement>(null);
+  const breakdownInput = useRef<HTMLTextAreaElement>(null);
+  const focusBreakdownOnOpen = useRef(false);
   useEffect(() => {
-    if (expanded && !editor.current?.open) editor.current?.showModal();
+    if (!expanded) return;
+    if (!editor.current?.open) editor.current?.showModal();
+    if (focusBreakdownOnOpen.current) {
+      focusBreakdownOnOpen.current = false;
+      if (breakdownDisclosure.current) breakdownDisclosure.current.open = true;
+      window.setTimeout(() => breakdownInput.current?.focus(), 0);
+    }
   }, [expanded]);
   useEffect(() => {
     if (!task.encryption) {
@@ -342,6 +376,17 @@ export function TaskRow({
     }
   };
   const overdue = requiresPlanningOn(task, productDate(settings.startTimeOfDay));
+  const date = productDate(settings.startTimeOfDay);
+  const rowView = current ? "current" : hideSchedule ? "planning" : "other";
+  const rowActions = taskRowActionAvailability(task, rowView, date);
+  const openBreakdown = () => {
+    focusBreakdownOnOpen.current = true;
+    onExpand();
+  };
+  const deleteTask = () => deleteTaskAfterConfirmation(
+    task.text,
+    () => queueCommand(task.id, "delete")
+  );
   const saveStatus = editorSaveStatus({
     connectionState: connection.value,
     queued: pendingCount.value,
@@ -381,14 +426,20 @@ export function TaskRow({
         {task.frogFails > 0 && <span class="frog-marks" aria-label={`${task.frogFails} redistributions`} title={`${task.frogFails} redistributions`}>{"●".repeat(Math.min(task.frogFails, 3))}</span>}
         {!hideSchedule && (task.schedule.date || task.schedule.month) && <time class="date" dateTime={task.schedule.date ?? task.schedule.month ?? undefined}>{task.schedule.date ?? task.schedule.month}{task.schedule.time ? ` · ${task.schedule.time}` : ""}</time>}
         {hideSchedule && task.schedule.time && <time class="date time-only" dateTime={task.schedule.time}>{task.schedule.time}</time>}
-        <button class="icon-button" aria-label={`Details for ${task.text}`} aria-expanded={expanded} onClick={onExpand}><Icon name="more" /></button>
+        <div class="task-actions" role="toolbar" aria-label={`Actions for ${task.text}`}>
+          <button class="icon-button task-action" aria-label={`Edit ${task.text}`} title="Edit task" aria-expanded={expanded} onClick={onExpand}><Icon name="edit" /></button>
+          {rowActions.skip && <button class="icon-button task-action" aria-label={`Skip ${task.text}`} title="Skip task" onClick={() => void queueCommand(task.id, "skip", {}, { skipDate: date })}><Icon name="skip" /></button>}
+          {rowActions.moveToToday && <button class="icon-button task-action" aria-label={`Move ${task.text} to today`} title="Move to today" onClick={() => void queueCommand(task.id, "update", { schedule: { ...task.schedule, month: date.slice(0, 7), date } })}><Icon name="calendar" /></button>}
+          {rowActions.breakdown && <button class="icon-button task-action" aria-label={`Break down ${task.text}`} title="Break down task" aria-expanded={expanded} onClick={openBreakdown}><Icon name="breakdown" /></button>}
+          <button class="icon-button task-action danger" aria-label={`Delete ${task.text}`} title="Delete task" onClick={() => void deleteTask()}><Icon name="trash" /></button>
+        </div>
       </div>
       {expanded && (
         <dialog ref={editor} class="task-editor" aria-label="Task editor" onClose={onExpand}>
           <div class="editor-shell">
             <header class="editor-header">
               {saveStatus && <p class="editor-save-state" role="status" aria-live="polite">{saveStatus}</p>}
-              <details class="editor-more more-menu"><summary class="icon-button" aria-label="More task actions"><Icon name="more" /></summary><div class="menu-panel"><button class="danger" onClick={(event) => applyDisclosureAction(() => void queueCommand(task.id, "delete"), event.currentTarget)}>Delete task</button></div></details>
+              <details class="editor-more more-menu"><summary class="icon-button" aria-label="More task actions"><Icon name="more" /></summary><div class="menu-panel"><button class="danger" onClick={(event) => applyDisclosureAction(() => void deleteTask(), event.currentTarget)}>Delete task</button></div></details>
               <button class="compact-control editor-done primary" onClick={() => editor.current?.close()}>Done</button>
             </header>
             <div class="editor-content">
@@ -411,9 +462,9 @@ export function TaskRow({
                 <label class="check-label"><input type="checkbox" checked={task.repetitive} onInput={(event) => void queueCommand(task.id, "update", { repetitive: event.currentTarget.checked })} /> Repetitive (copy or break down consciously)</label>
                 <div class="detail-actions"><button onClick={() => void queueCommand(task.id, "update", { frog: !task.frog })}>{task.frog ? "Unmark frog" : "Mark frog"}</button>{task.repetitive && <button onClick={() => void copyTask()}>Copy occurrence</button>}<button disabled={task.frog} title={task.frog ? "Frogs cannot be skipped" : undefined} onClick={() => void queueCommand(task.id, "skip", {}, { skipDate: productDate(settings.startTimeOfDay) })}>Skip</button></div>
               </section></details>
-              <details class="editor-disclosure"><summary>Breakdown &amp; delegation</summary><section class="editor-section" aria-labelledby={`breakdown-${task.id}`}>
+              <details ref={breakdownDisclosure} class="editor-disclosure"><summary>Breakdown &amp; delegation</summary><section class="editor-section" aria-labelledby={`breakdown-${task.id}`}>
                 <h3 id={`breakdown-${task.id}`}>Breakdown</h3>
-                <label>Break down into subtasks (one per line)<textarea value={breakdown} rows={3} onInput={(event) => setBreakdown(event.currentTarget.value)} /><button disabled={!breakdown.trim()} onClick={() => void breakDown()}>Create subtasks and complete parent</button></label>
+                <label>Break down into subtasks (one per line)<textarea ref={breakdownInput} value={breakdown} rows={3} onInput={(event) => setBreakdown(event.currentTarget.value)} /><button disabled={!breakdown.trim()} onClick={() => void breakDown()}>Create subtasks and complete parent</button></label>
                 <h3 id={`collaboration-${task.id}`}>Delegation</h3>
                 {task.userId === currentUserId && task.delegation && ["pending", "accepted"].includes(task.delegation.status) ? <div><p class="meta">Delegation {task.delegation.status}</p><button onClick={() => void revokeDelegation()}>Revoke delegation</button></div> : task.userId === currentUserId ? <label>Delegate to an existing account<span class="inline-fields"><input type="email" value={delegateEmail} placeholder="person@example.com" onInput={(event) => setDelegateEmail(event.currentTarget.value)} /><button disabled={!delegateEmail} onClick={() => void delegate()}>Delegate</button></span></label> : <p class="meta">Delegated to you · accepted</p>}
                 {delegationError && <p class="error" role="alert">{delegationError}</p>}

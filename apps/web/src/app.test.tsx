@@ -2,7 +2,7 @@ import render from "preact-render-to-string";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { canonicalRules, rankBetween, type Task } from "@todorant/domain";
-import { applyDisclosureAction, canReorderPlanningTasks, compactControlGeometry, editorSaveStatus, isActionableOn, Landing, planningReorderHelp, productDate, requiresPlanningOn, scheduleForNewTask, TaskRow, Workspace } from "./app.js";
+import { applyDisclosureAction, canReorderPlanningTasks, compactControlGeometry, deleteTaskAfterConfirmation, editorSaveStatus, isActionableOn, Landing, planningReorderHelp, productDate, requiresPlanningOn, scheduleForNewTask, taskRowActionAvailability, TaskRow, Workspace } from "./app.js";
 import { conflicts, connection, pendingCount, syncErrors, tasks } from "./sync.js";
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
@@ -126,6 +126,11 @@ describe("authenticated parity surface", () => {
     expect(compactRow).toContain('aria-label="Complete Plan launch"');
     expect(compactRow).toContain('class="overdue-marker"');
     expect(compactRow).toContain('aria-label="Overdue task"');
+    expect(compactRow).toContain('role="toolbar" aria-label="Actions for Plan launch"');
+    expect(compactRow).toContain('aria-label="Edit Plan launch" title="Edit task"');
+    expect(compactRow).toContain('aria-label="Break down Plan launch" title="Break down task"');
+    expect(compactRow).toContain('aria-label="Delete Plan launch" title="Delete task"');
+    expect(compactRow).not.toContain('aria-label="Details for Plan launch"');
     expect(compactRow).toContain('<svg class="icon"');
     expect(compactRow).not.toContain('class="task-editor"');
 
@@ -133,6 +138,83 @@ describe("authenticated parity surface", () => {
       <TaskRow task={value} index={0} all={[value]} current={false} expanded={false} hideSchedule onExpand={() => undefined} settings={{}} currentUserId={value.userId} />
     );
     expect(groupedRow).not.toContain('<time class="date"');
+  });
+
+  it("exposes only applicable direct task-row actions", () => {
+    const date = "2026-08-11";
+    const currentTask = task({
+      repetitive: false,
+      schedule: { month: "2026-08", date, time: null, timezone: "UTC" }
+    });
+    expect(taskRowActionAvailability(currentTask, "current", date)).toEqual({
+      breakdown: true,
+      moveToToday: false,
+      skip: true
+    });
+    const currentRow = render(
+      <TaskRow task={currentTask} index={0} all={[currentTask]} current expanded={false} onExpand={() => undefined} settings={{}} currentUserId={currentTask.userId} />
+    );
+    expect(currentRow).toContain('aria-label="Skip Plan launch" title="Skip task"');
+    expect(currentRow).not.toContain("Move Plan launch to today");
+    expect(currentRow).not.toContain('aria-label="Details for Plan launch"');
+
+    const frog = task({ ...currentTask, frog: true });
+    expect(taskRowActionAvailability(frog, "current", date).skip).toBe(false);
+    const frogRow = render(
+      <TaskRow task={frog} index={0} all={[frog]} current expanded={false} onExpand={() => undefined} settings={{}} currentUserId={frog.userId} />
+    );
+    expect(frogRow).not.toContain("Skip Plan launch");
+
+    const future = task({
+      repetitive: false,
+      schedule: { month: "2099-12", date: "2099-12-31", time: "09:00", timezone: "UTC" }
+    });
+    expect(taskRowActionAvailability(future, "planning", date)).toEqual({
+      breakdown: true,
+      moveToToday: true,
+      skip: false
+    });
+    const futureRow = render(
+      <TaskRow task={future} index={0} all={[future]} current={false} expanded={false} hideSchedule onExpand={() => undefined} settings={{}} currentUserId={future.userId} />
+    );
+    expect(futureRow).toContain('aria-label="Move Plan launch to today" title="Move to today"');
+    expect(futureRow).not.toContain("Skip Plan launch");
+
+    const completed = task({ completedAt: "2026-08-11T10:00:00.000Z" });
+    expect(taskRowActionAvailability(completed, "planning", date)).toEqual({
+      breakdown: false,
+      moveToToday: false,
+      skip: false
+    });
+    const completedRow = render(
+      <TaskRow task={completed} index={0} all={[completed]} current={false} expanded={false} hideSchedule onExpand={() => undefined} settings={{}} currentUserId={completed.userId} />
+    );
+    expect(completedRow).not.toContain("Break down Plan launch");
+    expect(completedRow).not.toContain("Move Plan launch to today");
+    expect(completedRow).toContain('aria-label="Edit Plan launch" title="Edit task"');
+    expect(completedRow).toContain('aria-label="Delete Plan launch" title="Delete task"');
+  });
+
+  it("requires confirmation before queuing a task tombstone", async () => {
+    const messages: string[] = [];
+    let tombstones = 0;
+    const queueTombstone = async () => { tombstones += 1; };
+
+    await expect(deleteTaskAfterConfirmation("Plan launch", queueTombstone, (message) => {
+      messages.push(message);
+      return false;
+    })).resolves.toBe(false);
+    expect(tombstones).toBe(0);
+
+    await expect(deleteTaskAfterConfirmation("Plan launch", queueTombstone, (message) => {
+      messages.push(message);
+      return true;
+    })).resolves.toBe(true);
+    expect(tombstones).toBe(1);
+    expect(messages).toEqual([
+      "Delete “Plan launch”? The task will move to Trash.",
+      "Delete “Plan launch”? The task will move to Trash."
+    ]);
   });
 
   it("moves icon-only Planning controls into the canonical topbar", () => {
@@ -191,6 +273,9 @@ describe("authenticated parity surface", () => {
     const taskStateRules = styles.match(/\.task\.is-(?:current|overdue)[^{]*\{[^}]*\}/gu) ?? [];
     expect(taskStateRules.join("\n")).not.toContain("border-left");
     expect(styles).toMatch(/\.task-main\s*\{[^}]*height:\s*48px/gu);
+    expect(styles).toMatch(/\.task-title\s*\{[^}]*flex:\s*1 1 auto;[^}]*min-width:\s*0;[^}]*text-overflow:\s*ellipsis/gu);
+    expect(styles).toMatch(/\.task-actions\s*\{[^}]*display:\s*flex;[^}]*flex:\s*0 0 auto/gu);
+    expect(styles).toMatch(/\.task-action\s*\{[^}]*min-width:\s*44px/gu);
     expect(styles).toMatch(/\.planning-group\s*>\s*header\s*\{[^}]*height:\s*30px/gu);
     expect(styles).toMatch(/\.planning-groups\s*\{[^}]*gap:\s*14px/gu);
     expect(styles).toMatch(/\.overdue-marker\s*\{[^}]*height:\s*6px;[^}]*width:\s*6px/gu);
