@@ -1,9 +1,10 @@
 import render from "preact-render-to-string";
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { canonicalRules, rankBetween, type Task } from "@todorant/domain";
-import { applyDisclosureAction, canReorderPlanningTasks, compactControlGeometry, isActionableOn, Landing, planningReorderHelp, productDate, requiresPlanningOn, scheduleForNewTask, TaskRow, Workspace } from "./app.js";
-import { tasks } from "./sync.js";
-import styles from "./styles.css?raw";
+import { applyDisclosureAction, canReorderPlanningTasks, compactControlGeometry, editorSaveStatus, isActionableOn, Landing, planningReorderHelp, productDate, requiresPlanningOn, scheduleForNewTask, TaskRow, Workspace } from "./app.js";
+import { conflicts, connection, pendingCount, syncErrors, tasks } from "./sync.js";
+const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
 describe("public landing", () => {
   it("stays simple and exposes the exact headline with email actions", () => {
@@ -99,19 +100,23 @@ describe("authenticated parity surface", () => {
     expect(row).not.toContain('aria-labelledby="task-editor-title-');
     expect(row).not.toContain(">Task editor</span>");
     expect(row).not.toContain(">Edit task</h2>");
-    expect(row).toContain("Saved locally · Sync");
     expect(row).toContain('class="compact-control editor-done primary"');
     expect(row).toContain(">Done</button>");
-    expect(row).toContain("Planning &amp; ordering");
-    expect(row).toContain("Tags &amp; behavior");
-    expect(row).toContain("Breakdown");
-    expect(row).toContain("Delegation");
+    expect(row).not.toContain("Close task editor");
+    expect(row).toContain('aria-label="More task actions"');
+    expect(row).toContain("Delete task");
+    expect(row).toContain("Planning &amp; behavior");
+    expect(row).toContain("Breakdown &amp; delegation");
     expect(row).toContain("Security &amp; history");
-    expect(row).toContain("Danger zone");
-    expect(row.indexOf("Task title")).toBeLessThan(row.indexOf("editor-disclosure"));
+    expect(row).not.toContain("Danger zone");
+    expect(row.match(/class="editor-disclosure"/gu)).toHaveLength(3);
+    expect(row).toContain('<label class="sr-only" for="task-title-');
+    expect(row).toContain('aria-label="Task title"');
+    expect(row).not.toContain(">Task</h3>");
     expect(row.indexOf("Schedule")).toBeLessThan(row.indexOf("editor-disclosure"));
     expect(row.indexOf("Exact time")).toBeLessThan(row.indexOf("editor-disclosure"));
     expect(row.indexOf("Note")).toBeLessThan(row.indexOf("editor-disclosure"));
+    expect(row).toContain('class="editor-note" rows="2"');
 
     const compactRow = render(
       <TaskRow task={value} index={0} all={[value]} current={false} expanded={false} onExpand={() => undefined} settings={{}} currentUserId={value.userId} />
@@ -140,25 +145,62 @@ describe("authenticated parity surface", () => {
         logout={() => undefined}
       />
     );
-    expect(planning).toContain('class="planning-tools"');
+    expect(planning).toContain('class="list-header planning-header"');
+    expect(planning).toContain('class="header-actions planning-tools"');
     expect(planning).toContain('aria-expanded="false"');
     expect(planning).not.toContain('class="planning-search"');
+    const toolbar = planning.match(/<div class="list-header planning-header">[\s\S]*?<\/div><\/div>/u)?.[0] ?? "";
+    expect(toolbar).toContain("Planning");
+    expect(toolbar).toContain("Search");
+    expect(toolbar).toContain("View");
+    expect(toolbar).toContain("Add task");
     expect(planning).toContain("View");
+    expect(planning).toContain("Week starts Monday · Day starts 00:00");
     expect(planning).toContain("Calendar month");
     expect(planning).toContain("Include completed");
     expect(planning).toContain("Reorder tasks");
     expect(planning).toContain('class="group-add"');
+    expect(planning).toContain('class="group-more more-menu"');
     expect(planning).toContain('aria-label="Add task for 2026-01-01"');
     expect(planning).toContain('class="planning-group is-overdue-group"');
     expect(planning).not.toContain("Local-first · revisioned history");
     expect(planning).not.toContain("Add here");
+    expect(planning).not.toContain("Trust the system");
+    expect(planning).not.toContain("Todorant day starts");
   });
 
-  it("keeps compact chrome inside 44px targets and uses dots instead of overdue borders", () => {
+  it("keeps dense rows and navigation around 48/30/60px without shrinking interaction targets", () => {
     expect(compactControlGeometry).toEqual({ hitTargetPx: 44, chromeInsetPx: 5, visualHeightPx: 34 });
     expect(compactControlGeometry.hitTargetPx - (2 * compactControlGeometry.chromeInsetPx)).toBe(compactControlGeometry.visualHeightPx);
     const taskStateRules = styles.match(/\.task\.is-(?:current|overdue)[^{]*\{[^}]*\}/gu) ?? [];
     expect(taskStateRules.join("\n")).not.toContain("border-left");
+    expect(styles).toMatch(/\.task-main\s*\{[^}]*height:\s*48px/gu);
+    expect(styles).toMatch(/\.planning-group\s*>\s*header\s*\{[^}]*height:\s*30px/gu);
+    expect(styles).toMatch(/\.planning-groups\s*\{[^}]*gap:\s*14px/gu);
+    expect(styles).toMatch(/\.overdue-marker\s*\{[^}]*height:\s*6px;[^}]*width:\s*6px/gu);
+    expect(styles).toMatch(/\.task-editor\s*\{[^}]*width:\s*min\(410px,\s*100%\)/gu);
+    expect(styles).toMatch(/@media \(max-width:\s*680px\)[\s\S]*?\.topbar\s*\{[^}]*min-height:\s*48px/gu);
+    expect(styles).toMatch(/@media \(max-width:\s*680px\)[\s\S]*?\.mobile-nav\s*\{[^}]*min-height:\s*60px/gu);
+    expect(styles).toMatch(/@media \(max-width:\s*680px\)[\s\S]*?\.group-add\s*\{[^}]*display:\s*none/gu);
+    expect(styles).toMatch(/@media \(max-width:\s*680px\)[\s\S]*?\.group-more\s*\{[^}]*display:\s*block/gu);
+  });
+
+  it("only announces actionable editor save states", () => {
+    expect(editorSaveStatus({ connectionState: "live", queued: 0, hasConflict: false, hasError: false })).toBeNull();
+    expect(editorSaveStatus({ connectionState: "syncing", queued: 2, hasConflict: false, hasError: false })).toBe("Saving… · 2 queued");
+    expect(editorSaveStatus({ connectionState: "offline", queued: 1, hasConflict: false, hasError: false })).toBe("Offline · 1 queued");
+    expect(editorSaveStatus({ connectionState: "live", queued: 0, hasConflict: true, hasError: false })).toBe("Conflict needs review");
+    expect(editorSaveStatus({ connectionState: "live", queued: 0, hasConflict: false, hasError: true })).toBe("Save error · review queued change");
+
+    connection.value = "live";
+    pendingCount.value = 0;
+    conflicts.value = [];
+    syncErrors.value = [];
+    const healthyEditor = render(
+      <TaskRow task={task()} index={0} all={[task()]} current expanded onExpand={() => undefined} settings={{}} currentUserId={task().userId} />
+    );
+    expect(healthyEditor).not.toContain("editor-save-state");
+    expect(healthyEditor).not.toContain("Saved locally");
   });
 
   it("applies View options and closes their disclosure", () => {
