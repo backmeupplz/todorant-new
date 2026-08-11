@@ -8,15 +8,30 @@
     <title>Planning Add computed-style fixture</title>
   </head>
   <body>
-    <div class="planning-tools">
-      <button class="compact-control add-context" type="button">
+    <div class="list-header planning-header">
+      <div class="header-actions">
+        <button class="compact-control add-context" type="button">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+          <span>Add task</span>
+        </button>
+      </div>
+    </div>
+    <div class="planning-topbar-tools" role="toolbar" aria-label="Planning controls">
+      <button id="planning-control-default" class="compact-control icon-only-control" aria-label="Search tasks" type="button">
         <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
-        <span>Add task</span>
       </button>
+      <button id="planning-control-active" class="compact-control icon-only-control active" aria-label="Search tasks active" type="button">
+        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+      </button>
+      <details class="view-menu" open>
+        <summary id="planning-control-open" class="compact-control icon-only-control" aria-label="View planning options">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h14" /></svg>
+        </summary>
+      </details>
     </div>
     <pre id="computed-styles"></pre>
     <script>
-      const button = document.querySelector(".planning-tools > .add-context");
+      const button = document.querySelector(".planning-header .add-context");
       const output = document.querySelector("#computed-styles");
       const resolveColor = (value) => {
         const probe = document.createElement("span");
@@ -30,12 +45,17 @@
         document.documentElement.classList.toggle("dark", theme === "dark");
         const buttonStyles = getComputedStyle(button);
         const rootStyles = getComputedStyle(document.documentElement);
+        const controls = ["default", "active", "open"].map((state) => {
+          const styles = getComputedStyle(document.querySelector(`#planning-control-${state}`));
+          return { state, background: styles.backgroundColor, foreground: styles.color, height: styles.height, width: styles.width };
+        });
         return {
           theme,
           background: buttonStyles.backgroundColor,
           foreground: buttonStyles.color,
           accent: resolveColor(rootStyles.getPropertyValue("--accent")),
-          surface: resolveColor(rootStyles.getPropertyValue("--surface"))
+          surface: resolveColor(rootStyles.getPropertyValue("--surface")),
+          controls
         };
       };
       output.textContent = JSON.stringify([snapshot("light"), snapshot("dark")]);
