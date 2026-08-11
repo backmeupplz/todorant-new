@@ -196,20 +196,34 @@ try {
             const value = element.getBoundingClientRect();
             return { bottom: value.bottom, height: value.height, left: value.left, right: value.right, top: value.top, width: value.width };
           };
+          const accentProbe = document.createElement('span');
+          accentProbe.style.color = 'var(--accent)';
+          document.body.append(accentProbe);
+          const accent = getComputedStyle(accentProbe).color;
+          accentProbe.remove();
           return rows.map((row) => {
             const title = row.querySelector('.task-title');
             const actions = row.querySelector('.task-actions');
             const tray = actions.querySelector('.task-action-tray');
+            const trigger = actions.querySelector('.task-actions-trigger');
+            const triggerStyle = trigger ? getComputedStyle(trigger) : null;
             return {
               row: { ...rect(row), clientWidth: row.clientWidth, scrollWidth: row.scrollWidth },
               title: { ...rect(title), overflow: getComputedStyle(title).textOverflow },
               actions: rect(actions),
               directCount: actions.querySelectorAll('.task-actions-direct button').length,
-              trigger: actions.querySelector('.task-actions-trigger') ? {
-                ...rect(actions.querySelector('.task-actions-trigger')),
-                expanded: actions.querySelector('.task-actions-trigger').getAttribute('aria-expanded'),
-                label: actions.querySelector('.task-actions-trigger').getAttribute('aria-label'),
-                title: actions.querySelector('.task-actions-trigger').title
+              trigger: trigger ? {
+                ...rect(trigger),
+                accent,
+                background: triggerStyle.backgroundColor,
+                borderColors: [triggerStyle.borderTopColor, triggerStyle.borderRightColor, triggerStyle.borderBottomColor, triggerStyle.borderLeftColor],
+                borderWidths: [triggerStyle.borderTopWidth, triggerStyle.borderRightWidth, triggerStyle.borderBottomWidth, triggerStyle.borderLeftWidth],
+                boxShadow: triggerStyle.boxShadow,
+                color: triggerStyle.color,
+                expanded: trigger.getAttribute('aria-expanded'),
+                icon: rect(trigger.querySelector('.icon')),
+                label: trigger.getAttribute('aria-label'),
+                title: trigger.title
               } : null,
               tray: tray ? {
                 ...rect(tray),
@@ -231,6 +245,13 @@ try {
         if (row.directCount !== 0 || !row.trigger || row.trigger.width < 44 || row.trigger.height < 44 || !row.trigger.label || !row.trigger.title) {
           throw new Error(`${label} long row did not collapse to one discoverable 44px trigger: ${JSON.stringify(row)}`);
         }
+        const visibleBorder = row.trigger.borderWidths.some((width, index) => width !== "0px" && row.trigger.borderColors[index] !== "rgba(0, 0, 0, 0)");
+        if (row.trigger.background !== "rgba(0, 0, 0, 0)" || visibleBorder || row.trigger.boxShadow !== "none" || row.trigger.color !== row.trigger.accent) {
+          throw new Error(`${label} overflow trigger rendered container chrome instead of only the brand-orange glyph: ${JSON.stringify(row.trigger)}`);
+        }
+        if (row.trigger.icon.width !== 18 || row.trigger.icon.height !== 18) {
+          throw new Error(`${label} overflow glyph did not preserve the 18px icon minimum: ${JSON.stringify(row.trigger.icon)}`);
+        }
         if (row.row.scrollWidth > row.row.clientWidth || row.title.right > row.actions.left || row.title.overflow !== "ellipsis") {
           throw new Error(`${label} long row overlaps or overflows before opening: ${JSON.stringify(row)}`);
         }
@@ -239,6 +260,10 @@ try {
 
     let taskRows = await taskActionSnapshot();
     verifyClosedRows("desktop", taskRows);
+    await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: taskRows[1].trigger.left + 22, y: taskRows[1].trigger.top + 22 });
+    taskRows = await taskActionSnapshot();
+    verifyClosedRows("hovered desktop", taskRows);
+    await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 0, y: 0 });
     console.log("desktop task actions: short row direct, two long rows collapsed, no overlap");
 
     await page.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -246,6 +271,23 @@ try {
     taskRows = await taskActionSnapshot();
     verifyClosedRows("390×844 mobile", taskRows);
     console.log("390×844 mobile task actions: short row direct, two long rows collapsed, no overlap");
+
+    await page.send("Runtime.evaluate", { expression: "document.documentElement.classList.add('dark')" });
+    taskRows = await taskActionSnapshot();
+    verifyClosedRows("dark 390×844 mobile", taskRows);
+    await page.send("Emulation.setDeviceMetricsOverride", { width: 1000, height: 900, deviceScaleFactor: 1, mobile: false });
+    await waitFor("document.querySelectorAll('.task-actions.is-overflow').length === 2");
+    taskRows = await taskActionSnapshot();
+    verifyClosedRows("dark desktop", taskRows);
+    await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: taskRows[1].trigger.left + 22, y: taskRows[1].trigger.top + 22 });
+    taskRows = await taskActionSnapshot();
+    verifyClosedRows("dark hovered desktop", taskRows);
+    await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 0, y: 0 });
+    console.log("light/dark desktop/mobile overflow triggers: transparent 44px target with one 18px brand-orange glyph");
+
+    await page.send("Runtime.evaluate", { expression: "document.documentElement.classList.remove('dark')" });
+    await page.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    await waitFor("document.querySelectorAll('.task-actions.is-overflow').length === 2");
 
     const evaluate = (expression) => page.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
     await evaluate("document.querySelectorAll('.task-actions-trigger')[0].click(); new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");

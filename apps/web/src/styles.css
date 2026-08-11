@@ -124,7 +124,14 @@ nav button.active { color: var(--ink); position: relative; }
 .task-action:hover { background-color: var(--soft); color: var(--ink); }
 .task-action.danger { color: var(--muted); }
 .task-action.danger:hover, .task-action.danger:focus-visible { color: var(--danger); }
-.task-actions-trigger { background-color: var(--surface); }
+.task-actions-trigger, .task-actions-trigger:hover, .task-actions-trigger:active {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--accent);
+  padding: 13px;
+}
 .task-action-tray { background: var(--surface); border-radius: var(--radius-sm); box-shadow: -14px 0 22px 6px var(--surface); position: absolute; right: 0; top: 0; z-index: 1; }
 .task-actions-probe { pointer-events: none; position: absolute; right: 0; visibility: hidden; }
 .task-actions-probe > span { flex: 0 0 44px; height: 44px; }
