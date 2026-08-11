@@ -60,6 +60,26 @@ export const shouldRestoreTaskActionTrigger = (reason: TaskActionTrayCloseReason
 export const shouldCloseTaskActionTrayForAnotherRow = (taskId: string, openedTaskId: string): boolean =>
   taskId !== openedTaskId;
 
+type TaskActionAvailability = { breakdown: boolean; moveToToday: boolean; skip: boolean };
+
+export const taskActionTrayContextRevision = (
+  task: Pick<Task, "id" | "revision" | "text">,
+  all: ReadonlyArray<Pick<Task, "id" | "revision">>,
+  view: "current" | "planning" | "other",
+  date: string,
+  actions: TaskActionAvailability
+): string => JSON.stringify([
+  view,
+  date,
+  task.id,
+  task.revision,
+  task.text,
+  actions.breakdown,
+  actions.moveToToday,
+  actions.skip,
+  all.map((rowTask) => [rowTask.id, rowTask.revision])
+]);
+
 const taskActionTrayOpenEvent = "todorant:task-action-tray-open";
 
 type EditorSaveStatusInput = {
@@ -417,6 +437,8 @@ export function TaskRow({
   const rowView = current ? "current" : hideSchedule ? "planning" : "other";
   const rowActions = taskRowActionAvailability(task, rowView, date);
   const rowActionCount = 2 + Number(rowActions.skip) + Number(rowActions.moveToToday) + Number(rowActions.breakdown);
+  const actionTrayContextRevision = taskActionTrayContextRevision(task, all, rowView, date, rowActions);
+  const previousActionTrayContextRevision = useRef(actionTrayContextRevision);
   const actionTrayId = `task-action-tray-${task.id}`;
   const closeActionTray = (reason: TaskActionTrayCloseReason) => {
     setActionTrayOpen(false);
@@ -508,8 +530,10 @@ export function TaskRow({
   }, [actionTrayOpen, task.id]);
 
   useEffect(() => {
-    if (actionTrayOpen) closeActionTray("context-change");
-  }, [current, hideSchedule]);
+    const contextChanged = previousActionTrayContextRevision.current !== actionTrayContextRevision;
+    previousActionTrayContextRevision.current = actionTrayContextRevision;
+    if (contextChanged && actionTrayOpen) closeActionTray("context-change");
+  }, [actionTrayContextRevision, actionTrayOpen]);
 
   const actionButtons = (insideTray: boolean) => {
     const run = (action: () => void, restoreFocus = true) => insideTray ? executeTrayAction(action, restoreFocus) : action();
