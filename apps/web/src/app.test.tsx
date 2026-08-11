@@ -325,6 +325,7 @@ describe("authenticated parity surface", () => {
     expect(styles).toMatch(/\.task-title\s*\{[^}]*flex:\s*1 1 auto;[^}]*min-width:\s*0;[^}]*text-overflow:\s*ellipsis/gu);
     expect(styles).toMatch(/\.task-actions\s*\{[^}]*display:\s*flex;[^}]*flex:\s*0 0 auto/gu);
     expect(styles).toMatch(/\.task-action\s*\{[^}]*flex:\s*0 0 44px;[^}]*height:\s*44px;[^}]*min-width:\s*44px/gu);
+    expect(styles).toMatch(/\.task-actions-trigger,\s*\.task-actions-trigger:hover,\s*\.task-actions-trigger:active\s*\{[^}]*background:\s*transparent;[^}]*border:\s*0;[^}]*box-shadow:\s*none;[^}]*color:\s*var\(--accent\);[^}]*padding:\s*13px/gu);
     expect(styles).toMatch(/\.task-action-tray\s*\{[^}]*position:\s*absolute;[^}]*right:\s*0;[^}]*top:\s*0/gu);
     expect(styles).toMatch(/\.task-actions-probe\s*\{[^}]*position:\s*absolute;[^}]*visibility:\s*hidden/gu);
     expect(styles).toMatch(/\.icon\s*\{[^}]*height:\s*18px;[^}]*width:\s*18px/gu);
