@@ -7,7 +7,7 @@
     "build": "vite build",
     "budget": "node scripts/check-budget.mjs",
     "dev": "vite",
-    "test": "vitest run --pool=threads",
+    "test": "vitest run --pool=threads && node scripts/check-add-context-render.mjs",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
