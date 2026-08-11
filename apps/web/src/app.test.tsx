@@ -135,9 +135,13 @@ describe("authenticated parity surface", () => {
     expect(groupedRow).not.toContain('<time class="date"');
   });
 
-  it("keeps Planning controls collapsed into Search and View disclosure", () => {
+  it("moves icon-only Planning controls into the canonical topbar", () => {
     const value = task();
-    tasks.value = [value];
+    const future = task({
+      id: "00000000-0000-4000-8000-000000000303",
+      schedule: { month: "2099-12", date: "2099-12-31", time: null, timezone: "UTC" }
+    });
+    tasks.value = [value, future];
     const planning = render(
       <Workspace
         initialView="planning"
@@ -146,15 +150,25 @@ describe("authenticated parity surface", () => {
       />
     );
     expect(planning).toContain('class="list-header planning-header"');
-    expect(planning).toContain('class="header-actions planning-tools"');
+    expect(planning).toContain('class="planning-topbar-tools" role="toolbar" aria-label="Planning controls"');
     expect(planning).toContain('aria-expanded="false"');
+    expect(planning).toContain('aria-pressed="false"');
     expect(planning).not.toContain('class="planning-search"');
-    const toolbar = planning.match(/<div class="list-header planning-header">[\s\S]*?<\/div><\/div>/u)?.[0] ?? "";
-    expect(toolbar).toContain("Planning");
-    expect(toolbar).toContain("Search");
-    expect(toolbar).toContain("View");
-    expect(toolbar).toContain("Add task");
-    expect(planning).toContain("View");
+    const topbar = planning.match(/<header class="topbar">[\s\S]*?<\/header>/u)?.[0] ?? "";
+    const searchControl = topbar.match(/<button class="compact-control icon-only-control[^"]*"[\s\S]*?<\/button>/u)?.[0] ?? "";
+    const viewControl = topbar.match(/<summary class="compact-control icon-only-control"[\s\S]*?<\/summary>/u)?.[0] ?? "";
+    expect(searchControl).toContain('aria-label="Search tasks"');
+    expect(searchControl).toContain('title="Search tasks"');
+    expect(searchControl).toContain('<svg class="icon"');
+    expect(searchControl).not.toContain(">Search<");
+    expect(viewControl).toContain('aria-label="View planning options"');
+    expect(viewControl).toContain('title="View planning options"');
+    expect(viewControl).toContain('<svg class="icon"');
+    expect(viewControl).not.toContain(">View<");
+    expect(planning).toContain('<h1 class="sr-only">Planning</h1>');
+    expect(planning).not.toContain("<h1>Planning</h1>");
+    expect(planning.match(/aria-current="page"/gu)).toHaveLength(2);
+    expect(planning).toContain("Add task");
     expect(planning).toContain("Week starts Monday · Day starts 00:00");
     expect(planning).toContain("Calendar month");
     expect(planning).toContain("Include completed");
@@ -163,6 +177,8 @@ describe("authenticated parity surface", () => {
     expect(planning).toContain('class="group-more more-menu"');
     expect(planning).toContain('aria-label="Add task for 2026-01-01"');
     expect(planning).toContain('class="planning-group is-overdue-group"');
+    expect(planning).toContain("2099-12-31");
+    expect(planning).not.toContain("Scheduled");
     expect(planning).not.toContain("Local-first · revisioned history");
     expect(planning).not.toContain("Add here");
     expect(planning).not.toContain("Trust the system");
@@ -187,9 +203,11 @@ describe("authenticated parity surface", () => {
 
   it("keeps the desktop Add accent and left-aligns the mobile wordmark", () => {
     expect(styles).toMatch(/\.add-context\s*\{[^}]*background:\s*var\(--accent\);[^}]*color:\s*var\(--accent-ink\)/gu);
-    expect(styles).toMatch(/\.planning-tools\s*>\s*button:not\(\.add-context\)[^{]*\{[^}]*background:\s*var\(--surface\)/gu);
-    expect(styles).not.toMatch(/\.planning-tools\s*>\s*button\s*,\s*\.view-menu\s*>\s*summary\s*\{[^}]*background/gu);
+    expect(styles).toMatch(/\.planning-header \.add-context\s*\{[^}]*color:\s*var\(--planning-add-ink\)/gu);
+    expect(styles).toMatch(/\.planning-topbar-tools \.icon-only-control\s*\{[^}]*background:\s*var\(--surface\);[^}]*width:\s*44px/gu);
+    expect(styles).toMatch(/\.planning-topbar-tools \.icon-only-control:hover,[^{]*\{[^}]*background:\s*var\(--soft\);[^}]*color:\s*var\(--ink\)/gu);
     expect(styles).toMatch(/@media \(max-width:\s*680px\)[\s\S]*?\.wordmark-button\s*\{[^}]*justify-self:\s*start/gu);
+    expect(styles).toMatch(/@media \(max-width:\s*680px\)[\s\S]*?\.planning-topbar-tools\s*\{[^}]*grid-column:\s*2;[^}]*justify-self:\s*end/gu);
   });
 
   it("only announces actionable editor save states", () => {

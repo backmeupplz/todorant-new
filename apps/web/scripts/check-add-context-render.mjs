@@ -132,6 +132,16 @@ try {
         throw new Error(`${snapshot.theme} Planning Add contrast ${ratio.toFixed(2)}:1 is below 4.5:1 (${snapshot.background} / ${snapshot.foreground})`);
       }
       console.log(`${snapshot.theme} Planning Add: ${snapshot.background} / ${snapshot.foreground} = ${ratio.toFixed(2)}:1`);
+      for (const control of snapshot.controls) {
+        const controlRatio = contrast(control.background, control.foreground);
+        if (controlRatio < 4.5) {
+          throw new Error(`${snapshot.theme} ${control.state} Planning control contrast ${controlRatio.toFixed(2)}:1 is below 4.5:1 (${control.background} / ${control.foreground})`);
+        }
+        if (Number.parseFloat(control.height) < 44 || Number.parseFloat(control.width) < 44) {
+          throw new Error(`${snapshot.theme} ${control.state} Planning control is below the 44px target (${control.width} × ${control.height})`);
+        }
+        console.log(`${snapshot.theme} ${control.state} Planning control: ${control.width} × ${control.height}, ${controlRatio.toFixed(2)}:1`);
+      }
     }
   } finally {
     page.close();
