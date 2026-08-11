@@ -231,7 +231,8 @@ describe("authenticated parity surface", () => {
         logout={() => undefined}
       />
     );
-    expect(planning).toContain('class="list-header planning-header"');
+    expect(planning).not.toContain('class="list-header planning-header"');
+    expect(planning).not.toContain('class="list-header"');
     expect(planning).toContain('class="planning-topbar-tools" role="toolbar" aria-label="Planning controls"');
     expect(planning).toContain('aria-expanded="false"');
     expect(planning).toContain('aria-pressed="false"');
@@ -247,6 +248,8 @@ describe("authenticated parity surface", () => {
     expect(viewControl).toContain('title="View planning options"');
     expect(viewControl).toContain('<svg class="icon"');
     expect(viewControl).not.toContain(">View<");
+    expect(topbar).toContain('class="compact-control add-context"');
+    expect(planning.match(/class="compact-control add-context"/gu)).toHaveLength(1);
     expect(planning).toContain('<h1 class="sr-only">Planning</h1>');
     expect(planning).not.toContain("<h1>Planning</h1>");
     expect(planning.match(/aria-current="page"/gu)).toHaveLength(2);
@@ -256,8 +259,8 @@ describe("authenticated parity surface", () => {
     expect(planning).toContain("Include completed");
     expect(planning).toContain("Reorder tasks");
     expect(planning).toContain('class="group-add"');
-    expect(planning).toContain('class="group-more more-menu"');
-    expect(planning).toContain('aria-label="Add task for 2026-01-01"');
+    expect(planning).not.toContain('class="group-more more-menu"');
+    expect(planning).toContain('aria-label="Add task for 2026-01-01" title="Add task for 2026-01-01"');
     expect(planning).toContain('class="planning-group is-overdue-group"');
     expect(planning).toContain("2099-12-31");
     expect(planning).not.toContain("Scheduled");
@@ -267,7 +270,7 @@ describe("authenticated parity surface", () => {
     expect(planning).not.toContain("Todorant day starts");
   });
 
-  it("keeps dense rows and navigation around 48/30/60px without shrinking interaction targets", () => {
+  it("keeps dense rows and navigation on the 48/26/15/60px rhythm without shrinking interaction targets", () => {
     expect(compactControlGeometry).toEqual({ hitTargetPx: 44, chromeInsetPx: 5, visualHeightPx: 34 });
     expect(compactControlGeometry.hitTargetPx - (2 * compactControlGeometry.chromeInsetPx)).toBe(compactControlGeometry.visualHeightPx);
     const taskStateRules = styles.match(/\.task\.is-(?:current|overdue)[^{]*\{[^}]*\}/gu) ?? [];
@@ -276,23 +279,32 @@ describe("authenticated parity surface", () => {
     expect(styles).toMatch(/\.task-title\s*\{[^}]*flex:\s*1 1 auto;[^}]*min-width:\s*0;[^}]*text-overflow:\s*ellipsis/gu);
     expect(styles).toMatch(/\.task-actions\s*\{[^}]*display:\s*flex;[^}]*flex:\s*0 0 auto/gu);
     expect(styles).toMatch(/\.task-action\s*\{[^}]*min-width:\s*44px/gu);
-    expect(styles).toMatch(/\.planning-group\s*>\s*header\s*\{[^}]*height:\s*30px/gu);
-    expect(styles).toMatch(/\.planning-groups\s*\{[^}]*gap:\s*14px/gu);
+    expect(styles).toMatch(/\.icon\s*\{[^}]*height:\s*18px;[^}]*width:\s*18px/gu);
+    expect(styles).toMatch(/\.planning-group\s*>\s*header\s*\{[^}]*border-bottom:\s*1px solid var\(--line\);[^}]*height:\s*26px;[^}]*margin-bottom:\s*7px/gu);
+    expect(styles).toMatch(/\.planning-groups\s*\{[^}]*gap:\s*15px/gu);
     expect(styles).toMatch(/\.overdue-marker\s*\{[^}]*height:\s*6px;[^}]*width:\s*6px/gu);
     expect(styles).toMatch(/\.task-editor\s*\{[^}]*width:\s*min\(410px,\s*100%\)/gu);
     expect(styles).toMatch(/@media \(max-width:\s*680px\)[\s\S]*?\.topbar\s*\{[^}]*min-height:\s*48px/gu);
     expect(styles).toMatch(/@media \(max-width:\s*680px\)[\s\S]*?\.mobile-nav\s*\{[^}]*min-height:\s*60px/gu);
     expect(styles).toMatch(/@media \(max-width:\s*680px\)[\s\S]*?\.group-add\s*\{[^}]*display:\s*none/gu);
-    expect(styles).toMatch(/@media \(max-width:\s*680px\)[\s\S]*?\.group-more\s*\{[^}]*display:\s*block/gu);
+    expect(styles).not.toContain(".group-more");
   });
 
-  it("keeps the desktop Add accent and left-aligns the mobile wordmark", () => {
-    expect(styles).toMatch(/\.add-context\s*\{[^}]*background:\s*var\(--accent\);[^}]*color:\s*var\(--accent-ink\)/gu);
-    expect(styles).toMatch(/\.planning-header \.add-context\s*\{[^}]*color:\s*var\(--planning-add-ink\)/gu);
+  it("uses the AA Planning Add treatment on the shared grid and keeps one mobile Add", () => {
+    expect(styles.match(/--action-accent:\s*#c94717/gu)).toHaveLength(2);
+    expect(styles.match(/--action-ink:\s*#fff/gu)).toHaveLength(2);
+    expect(styles).toMatch(/--content-width:\s*900px/gu);
+    expect(styles).toMatch(/\.topbar\s*\{[^}]*calc\(\(100vw - var\(--content-width\)\) \/ 2\)/gu);
+    expect(styles).toMatch(/\.workspace\s*\{[^}]*padding:\s*14px 0 72px;[^}]*width:\s*min\(var\(--content-width\), calc\(100% - 32px\)\)/gu);
+    expect(styles).toMatch(/\.add-context\s*\{[^}]*background:\s*var\(--action-accent\);[^}]*color:\s*var\(--action-ink\)/gu);
+    expect(styles).toMatch(/\.task-action\.danger\s*\{[^}]*color:\s*var\(--muted\)/gu);
+    expect(styles).toMatch(/\.task-action\.danger:hover, \.task-action\.danger:focus-visible\s*\{[^}]*color:\s*var\(--danger\)/gu);
     expect(styles).toMatch(/\.planning-topbar-tools \.icon-only-control\s*\{[^}]*background:\s*var\(--surface\);[^}]*width:\s*44px/gu);
     expect(styles).toMatch(/\.planning-topbar-tools \.icon-only-control:hover,[^{]*\{[^}]*background:\s*var\(--soft\);[^}]*color:\s*var\(--ink\)/gu);
     expect(styles).toMatch(/@media \(max-width:\s*680px\)[\s\S]*?\.wordmark-button\s*\{[^}]*justify-self:\s*start/gu);
     expect(styles).toMatch(/@media \(max-width:\s*680px\)[\s\S]*?\.planning-topbar-tools\s*\{[^}]*grid-column:\s*2;[^}]*justify-self:\s*end/gu);
+    expect(styles).toMatch(/@media \(max-width:\s*680px\)[\s\S]*?\.workspace\s*\{[^}]*padding:\s*12px 0 78px;[^}]*width:\s*calc\(100% - 20px\)/gu);
+    expect(styles).toMatch(/@media \(max-width:\s*680px\)[\s\S]*?\.planning-topbar-tools \.add-context\s*\{[^}]*display:\s*none/gu);
   });
 
   it("only announces actionable editor save states", () => {

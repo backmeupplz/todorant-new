@@ -126,8 +126,8 @@ try {
       if (snapshot.background === snapshot.surface) {
         throw new Error(`${snapshot.theme} Planning Add uses the secondary surface background ${snapshot.background}`);
       }
-      if (snapshot.background !== snapshot.accent) {
-        throw new Error(`${snapshot.theme} Planning Add background ${snapshot.background} does not match accent ${snapshot.accent}`);
+      if (snapshot.background !== snapshot.actionAccent) {
+        throw new Error(`${snapshot.theme} Planning Add background ${snapshot.background} does not match action accent ${snapshot.actionAccent}`);
       }
       if (ratio < 4.5) {
         throw new Error(`${snapshot.theme} Planning Add contrast ${ratio.toFixed(2)}:1 is below 4.5:1 (${snapshot.background} / ${snapshot.foreground})`);
@@ -144,6 +144,46 @@ try {
         console.log(`${snapshot.theme} ${control.state} Planning control: ${control.width} × ${control.height}, ${controlRatio.toFixed(2)}:1`);
       }
     }
+    const measurePlanningLayout = async (label, width, height, mobile) => {
+      await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
+      const measured = await page.send("Runtime.evaluate", {
+        expression: "window.planningLayoutSnapshot()",
+        returnByValue: true
+      });
+      const snapshot = measured.result.value;
+      const alignmentTolerance = 1;
+      if (Math.abs(snapshot.topbarStart.left - snapshot.workspace.left) > alignmentTolerance ||
+          Math.abs(snapshot.groups.left - snapshot.workspace.left) > alignmentTolerance ||
+          Math.abs(snapshot.groups.right - snapshot.workspace.right) > alignmentTolerance) {
+        throw new Error(`${label} Planning grid is misaligned: ${JSON.stringify(snapshot)}`);
+      }
+      const planningTopGap = snapshot.groups.top - snapshot.topbar.bottom;
+      if (planningTopGap < 12 || planningTopGap > 16) {
+        throw new Error(`${label} Planning starts ${planningTopGap}px below the topbar, expected 12–16px`);
+      }
+      const expectedWidth = mobile ? width - 20 : Math.min(900, width - 32);
+      if (Math.abs(snapshot.workspace.width - expectedWidth) > alignmentTolerance) {
+        throw new Error(`${label} workspace is ${snapshot.workspace.width}px wide, expected ${expectedWidth}px`);
+      }
+      if (snapshot.groupHeader.height !== 26 || snapshot.groupHeader.marginBottom !== "7px" || snapshot.groupGap !== "15px" || snapshot.taskMain.height !== 48) {
+        throw new Error(`${label} Planning rhythm is incorrect: ${JSON.stringify({ header: snapshot.groupHeader, gap: snapshot.groupGap, row: snapshot.taskMain })}`);
+      }
+      if (snapshot.groupHeader.borderColor !== snapshot.lineColor) {
+        throw new Error(`${label} overdue group divider is not neutral (${snapshot.groupHeader.borderColor} / ${snapshot.lineColor})`);
+      }
+      if (snapshot.icon.width !== 18 || snapshot.icon.height !== 18) {
+        throw new Error(`${label} task action icon is not 18px (${snapshot.icon.width} × ${snapshot.icon.height})`);
+      }
+      if (snapshot.actionColors.delete !== snapshot.actionColors.neutral) {
+        throw new Error(`${label} Delete is emphasized before interaction (${snapshot.actionColors.delete} / ${snapshot.actionColors.neutral})`);
+      }
+      if (snapshot.visibleAddCount !== 1 || (mobile
+        ? snapshot.addVisibility.desktop || !snapshot.addVisibility.mobile || snapshot.addVisibility.group
+        : !snapshot.addVisibility.desktop || snapshot.addVisibility.mobile || snapshot.addVisibility.group)) {
+        throw new Error(`${label} does not expose exactly one persistent Add action: ${JSON.stringify(snapshot.addVisibility)}`);
+      }
+      console.log(`${label} Planning grid: ${snapshot.workspace.width}px, ${planningTopGap}px top gap, 26/7/15/48px rhythm, one persistent Add`);
+    };
     const measureTaskRow = async (label, width, height, mobile) => {
       await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
       const measured = await page.send("Runtime.evaluate", {
@@ -167,6 +207,8 @@ try {
       }
       console.log(`${label} task row: ${snapshot.row.width}px, title ${snapshot.title.width}px, ${snapshot.buttons.length} exposed 44px actions`);
     };
+    await measurePlanningLayout("desktop", 1000, 900, false);
+    await measurePlanningLayout("390×844 mobile", 390, 844, true);
     await measureTaskRow("desktop", 1000, 900, false);
     await measureTaskRow("390×844 mobile", 390, 844, true);
   } finally {

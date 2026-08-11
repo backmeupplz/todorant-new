@@ -8,48 +8,67 @@
     <title>Planning Add computed-style fixture</title>
   </head>
   <body>
-    <div class="list-header planning-header">
-      <div class="header-actions">
+    <header class="topbar">
+      <button id="topbar-start" class="wordmark-button" type="button">Todorant</button>
+      <nav class="primary-nav"><button class="compact-control active" type="button">Planning</button></nav>
+      <div class="planning-topbar-tools" role="toolbar" aria-label="Planning controls">
+        <button id="planning-control-default" class="compact-control icon-only-control" aria-label="Search tasks" type="button">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+        </button>
+        <button id="planning-control-active" class="compact-control icon-only-control active" aria-label="Search tasks active" type="button">
+          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+        </button>
+        <details class="view-menu" open>
+          <summary id="planning-control-open" class="compact-control icon-only-control" aria-label="View planning options">
+            <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h14" /></svg>
+          </summary>
+        </details>
         <button class="compact-control add-context" type="button">
           <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
           <span>Add task</span>
         </button>
       </div>
-    </div>
-    <div class="planning-topbar-tools" role="toolbar" aria-label="Planning controls">
-      <button id="planning-control-default" class="compact-control icon-only-control" aria-label="Search tasks" type="button">
-        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
-      </button>
-      <button id="planning-control-active" class="compact-control icon-only-control active" aria-label="Search tasks active" type="button">
-        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
-      </button>
-      <details class="view-menu" open>
-        <summary id="planning-control-open" class="compact-control icon-only-control" aria-label="View planning options">
-          <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h14" /></svg>
-        </summary>
-      </details>
-    </div>
+      <div class="top-actions"><button type="button">More</button></div>
+    </header>
     <main class="workspace row-geometry-fixture">
-      <ul class="task-list">
-        <li class="task">
-          <div class="task-main">
-            <button class="check" aria-label="Complete long task title" type="button"><span class="check-visual" aria-hidden="true"></span></button>
-            <button class="task-title" aria-label="Edit long task title" type="button">A deliberately long task title that must truncate before its direct actions</button>
-            <span class="badge">current</span>
-            <time class="date">2099-12-31</time>
-            <div class="task-actions" role="toolbar" aria-label="Actions for long task title">
-              <button class="icon-button task-action" aria-label="Edit long task title" title="Edit task" type="button"><svg class="icon" aria-hidden="true" viewBox="0 0 20 20"><path d="M4 16 16 4" /></svg></button>
-              <button class="icon-button task-action" aria-label="Move long task title to today" title="Move to today" type="button"><svg class="icon" aria-hidden="true" viewBox="0 0 20 20"><path d="M4 10h12" /></svg></button>
-              <button class="icon-button task-action" aria-label="Break down long task title" title="Break down task" type="button"><svg class="icon" aria-hidden="true" viewBox="0 0 20 20"><path d="M4 5h12M10 5v10" /></svg></button>
-              <button class="icon-button task-action danger" aria-label="Delete long task title" title="Delete task" type="button"><svg class="icon" aria-hidden="true" viewBox="0 0 20 20"><path d="M5 6h10M7 6v10h6V6" /></svg></button>
-            </div>
-          </div>
-        </li>
-      </ul>
+      <div class="planning-groups">
+        <section class="planning-group is-overdue-group">
+          <header>
+            <div><span>Overdue</span><h2>2026-08-10</h2></div>
+            <div class="group-actions"><button class="group-add" aria-label="Add task for 2026-08-10" title="Add task for 2026-08-10" type="button">
+              <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+            </button></div>
+          </header>
+          <ul class="task-list">
+            <li class="task">
+              <div class="task-main">
+                <button class="check" aria-label="Complete long task title" type="button"><span class="check-visual" aria-hidden="true"></span></button>
+                <span class="overdue-marker" role="img" aria-label="Overdue task"></span>
+                <button class="task-title" aria-label="Edit long task title" type="button">A deliberately long task title that must truncate before its direct actions</button>
+                <span class="badge">current</span>
+                <time class="date">2099-12-31</time>
+                <div class="task-actions" role="toolbar" aria-label="Actions for long task title">
+                  <button class="icon-button task-action" aria-label="Edit long task title" title="Edit task" type="button"><svg class="icon" aria-hidden="true" viewBox="0 0 20 20"><path d="M4 16 16 4" /></svg></button>
+                  <button class="icon-button task-action" aria-label="Move long task title to today" title="Move to today" type="button"><svg class="icon" aria-hidden="true" viewBox="0 0 20 20"><path d="M4 10h12" /></svg></button>
+                  <button class="icon-button task-action" aria-label="Break down long task title" title="Break down task" type="button"><svg class="icon" aria-hidden="true" viewBox="0 0 20 20"><path d="M4 5h12M10 5v10" /></svg></button>
+                  <button class="icon-button task-action danger" aria-label="Delete long task title" title="Delete task" type="button"><svg class="icon" aria-hidden="true" viewBox="0 0 20 20"><path d="M5 6h10M7 6v10h6V6" /></svg></button>
+                </div>
+              </div>
+            </li>
+          </ul>
+        </section>
+        <section class="planning-group"><header><div><span>Today</span><h2>2026-08-11</h2></div></header></section>
+      </div>
     </main>
+    <nav class="mobile-nav" aria-label="Mobile Todorant workflow">
+      <button type="button">Current</button>
+      <button type="button">Planning</button>
+      <button class="mobile-add" type="button">Add</button>
+      <button type="button">More</button>
+    </nav>
     <pre id="computed-styles"></pre>
     <script>
-      const button = document.querySelector(".planning-header .add-context");
+      const button = document.querySelector(".planning-topbar-tools .add-context");
       const output = document.querySelector("#computed-styles");
       const resolveColor = (value) => {
         const probe = document.createElement("span");
@@ -71,9 +90,46 @@
           theme,
           background: buttonStyles.backgroundColor,
           foreground: buttonStyles.color,
-          accent: resolveColor(rootStyles.getPropertyValue("--accent")),
+          actionAccent: resolveColor(rootStyles.getPropertyValue("--action-accent")),
           surface: resolveColor(rootStyles.getPropertyValue("--surface")),
           controls
+        };
+      };
+      window.planningLayoutSnapshot = () => {
+        const topbar = document.querySelector(".topbar");
+        const topbarStart = document.querySelector("#topbar-start");
+        const workspace = document.querySelector(".workspace");
+        const groups = document.querySelector(".planning-groups");
+        const group = document.querySelector(".planning-group");
+        const groupHeader = group.querySelector("header");
+        const taskMain = document.querySelector(".task-main");
+        const deleteAction = document.querySelector(".task-action.danger");
+        const neutralAction = document.querySelector(".task-action:not(.danger)");
+        const icon = neutralAction.querySelector(".icon");
+        const isVisible = (item) => {
+          const styles = getComputedStyle(item);
+          return item.getClientRects().length > 0 && styles.visibility !== "hidden" && styles.opacity !== "0";
+        };
+        const visibleAdds = [...document.querySelectorAll(".add-context, .mobile-add, .group-add")].filter(isVisible);
+        const rect = (element) => {
+          const value = element.getBoundingClientRect();
+          return { bottom: value.bottom, height: value.height, left: value.left, right: value.right, top: value.top, width: value.width };
+        };
+        return {
+          viewportWidth: document.documentElement.clientWidth,
+          topbar: rect(topbar),
+          topbarStart: rect(topbarStart),
+          workspace: rect(workspace),
+          groups: rect(groups),
+          group: rect(group),
+          groupHeader: { ...rect(groupHeader), marginBottom: getComputedStyle(groupHeader).marginBottom, borderColor: getComputedStyle(groupHeader).borderBottomColor },
+          lineColor: resolveColor(getComputedStyle(document.documentElement).getPropertyValue("--line")),
+          groupGap: getComputedStyle(groups).rowGap,
+          taskMain: rect(taskMain),
+          icon: rect(icon),
+          actionColors: { neutral: getComputedStyle(neutralAction).color, delete: getComputedStyle(deleteAction).color },
+          addVisibility: { desktop: isVisible(button), mobile: isVisible(document.querySelector(".mobile-add")), group: isVisible(document.querySelector(".group-add")) },
+          visibleAddCount: visibleAdds.length
         };
       };
       window.taskRowSnapshot = () => {
