@@ -88,11 +88,18 @@ describe("authenticated parity surface", () => {
     expect(row).toContain("Conscious repetitive task");
     expect(row).toContain("1 redistribution");
     expect(row).toContain('class="task-editor"');
-    expect(row).toContain("Basics");
-    expect(row).toContain("Planning");
-    expect(row).toContain("Behavior");
+    expect(row).toContain("Saved locally · Sync");
+    expect(row).toContain(">Done</button>");
+    expect(row).toContain("Planning &amp; ordering");
+    expect(row).toContain("Tags &amp; behavior");
+    expect(row).toContain("Breakdown");
+    expect(row).toContain("Delegation");
     expect(row).toContain("Security &amp; history");
     expect(row).toContain("Danger zone");
+    expect(row.indexOf("Task title")).toBeLessThan(row.indexOf("editor-disclosure"));
+    expect(row.indexOf("Schedule")).toBeLessThan(row.indexOf("editor-disclosure"));
+    expect(row.indexOf("Exact time")).toBeLessThan(row.indexOf("editor-disclosure"));
+    expect(row.indexOf("Note")).toBeLessThan(row.indexOf("editor-disclosure"));
 
     const compactRow = render(
       <TaskRow task={value} index={0} all={[value]} current={false} expanded={false} onExpand={() => undefined} settings={{}} currentUserId={value.userId} />
@@ -100,7 +107,13 @@ describe("authenticated parity surface", () => {
     expect(compactRow).toContain('class="task-title"');
     expect(compactRow).toContain('class="check-visual"');
     expect(compactRow).toContain('aria-label="Complete Plan launch"');
+    expect(compactRow).toContain('<svg class="icon"');
     expect(compactRow).not.toContain('class="task-editor"');
+
+    const groupedRow = render(
+      <TaskRow task={value} index={0} all={[value]} current={false} expanded={false} hideSchedule onExpand={() => undefined} settings={{}} currentUserId={value.userId} />
+    );
+    expect(groupedRow).not.toContain('<time class="date"');
   });
 
   it("keeps Planning controls collapsed into Search and View disclosure", () => {
@@ -122,6 +135,8 @@ describe("authenticated parity surface", () => {
     expect(planning).toContain("Reorder tasks");
     expect(planning).toContain('class="group-add"');
     expect(planning).toContain('aria-label="Add task for 2026-01-01"');
+    expect(planning).toContain('class="planning-group is-overdue-group"');
+    expect(planning).not.toContain("Local-first · revisioned history");
     expect(planning).not.toContain("Add here");
   });
 
