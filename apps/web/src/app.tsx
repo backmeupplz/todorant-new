@@ -363,10 +363,10 @@ export function TaskRow({
         <button class="icon-button" aria-label={`Details for ${task.text}`} aria-expanded={expanded} onClick={onExpand}><Icon name="more" /></button>
       </div>
       {expanded && (
-        <dialog ref={editor} class="task-editor" aria-labelledby={`task-editor-title-${task.id}`} onClose={onExpand}>
+        <dialog ref={editor} class="task-editor" aria-label="Task editor" onClose={onExpand}>
           <div class="editor-shell">
             <header class="editor-header">
-              <div><span class="eyebrow">Task editor</span><h2 id={`task-editor-title-${task.id}`}>Edit task</h2><p class="editor-save-state" role="status">Saved locally · Sync {connection.value}{pendingCount.value ? ` · ${pendingCount.value} queued` : ""}</p></div>
+              <p class="editor-save-state" role="status">Saved locally · Sync {connection.value}{pendingCount.value ? ` · ${pendingCount.value} queued` : ""}</p>
               <div class="editor-header-actions"><button class="compact-control editor-done primary" onClick={() => editor.current?.close()}>Done</button><button class="icon-button" aria-label="Close task editor" onClick={() => editor.current?.close()}><Icon name="close" /></button></div>
             </header>
             <div class="editor-content">

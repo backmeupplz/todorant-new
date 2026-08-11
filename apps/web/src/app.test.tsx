@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { canonicalRules, rankBetween, type Task } from "@todorant/domain";
 import { applyDisclosureAction, canReorderPlanningTasks, compactControlGeometry, isActionableOn, Landing, planningReorderHelp, productDate, requiresPlanningOn, scheduleForNewTask, TaskRow, Workspace } from "./app.js";
 import { tasks } from "./sync.js";
+import styles from "./styles.css?raw";
 
 describe("public landing", () => {
   it("stays simple and exposes the exact headline with email actions", () => {
@@ -94,6 +95,10 @@ describe("authenticated parity surface", () => {
     expect(row).toContain("Conscious repetitive task");
     expect(row).toContain("1 redistribution");
     expect(row).toContain('class="task-editor"');
+    expect(row).toContain('aria-label="Task editor"');
+    expect(row).not.toContain('aria-labelledby="task-editor-title-');
+    expect(row).not.toContain(">Task editor</span>");
+    expect(row).not.toContain(">Edit task</h2>");
     expect(row).toContain("Saved locally · Sync");
     expect(row).toContain('class="compact-control editor-done primary"');
     expect(row).toContain(">Done</button>");
@@ -152,6 +157,8 @@ describe("authenticated parity surface", () => {
   it("keeps compact chrome inside 44px targets and uses dots instead of overdue borders", () => {
     expect(compactControlGeometry).toEqual({ hitTargetPx: 44, chromeInsetPx: 5, visualHeightPx: 34 });
     expect(compactControlGeometry.hitTargetPx - (2 * compactControlGeometry.chromeInsetPx)).toBe(compactControlGeometry.visualHeightPx);
+    const taskStateRules = styles.match(/\.task\.is-(?:current|overdue)[^{]*\{[^}]*\}/gu) ?? [];
+    expect(taskStateRules.join("\n")).not.toContain("border-left");
   });
 
   it("applies View options and closes their disclosure", () => {
