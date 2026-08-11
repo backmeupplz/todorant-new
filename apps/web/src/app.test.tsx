@@ -2,7 +2,7 @@ import render from "preact-render-to-string";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { canonicalRules, rankBetween, type Task } from "@todorant/domain";
-import { applyDisclosureAction, canReorderPlanningTasks, compactControlGeometry, deleteTaskAfterConfirmation, editorSaveStatus, isActionableOn, Landing, planningReorderHelp, productDate, requiresPlanningOn, scheduleForNewTask, shouldCloseTaskActionTrayForAnotherRow, shouldRestoreTaskActionTrigger, taskActionsFit, taskRowActionAvailability, TaskRow, Workspace } from "./app.js";
+import { applyDisclosureAction, canReorderPlanningTasks, compactControlGeometry, deleteTaskAfterConfirmation, editorSaveStatus, isActionableOn, Landing, planningReorderHelp, productDate, requiresPlanningOn, scheduleForNewTask, shouldCloseTaskActionTrayForAnotherRow, shouldRestoreTaskActionTrigger, taskActionsFit, taskActionTrayContextRevision, taskRowActionAvailability, TaskRow, Workspace } from "./app.js";
 import { conflicts, connection, pendingCount, syncErrors, tasks } from "./sync.js";
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
@@ -250,6 +250,17 @@ describe("authenticated parity surface", () => {
     expect(shouldRestoreTaskActionTrigger("another-row")).toBe(false);
     expect(shouldRestoreTaskActionTrigger("context-change")).toBe(false);
     expect(shouldRestoreTaskActionTrigger("resize")).toBe(false);
+  });
+
+  it("revises the action-tray context for retained task, list, view, date, and action changes", () => {
+    const value = task();
+    const actions = { breakdown: true, moveToToday: true, skip: false };
+    const initial = taskActionTrayContextRevision(value, [value], "planning", "2026-08-11", actions);
+    expect(taskActionTrayContextRevision({ ...value, revision: 2 }, [{ ...value, revision: 2 }], "planning", "2026-08-11", actions)).not.toBe(initial);
+    expect(taskActionTrayContextRevision(value, [value, task({ id: "task-b" })], "planning", "2026-08-11", actions)).not.toBe(initial);
+    expect(taskActionTrayContextRevision(value, [value], "current", "2026-08-11", actions)).not.toBe(initial);
+    expect(taskActionTrayContextRevision(value, [value], "planning", "2026-08-12", actions)).not.toBe(initial);
+    expect(taskActionTrayContextRevision(value, [value], "planning", "2026-08-11", { ...actions, moveToToday: false })).not.toBe(initial);
   });
 
   it("moves icon-only Planning controls into the canonical topbar", () => {

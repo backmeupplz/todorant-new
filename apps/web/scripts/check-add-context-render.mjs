@@ -279,7 +279,29 @@ try {
     if (!actionState.result.value.confirmed || actionState.result.value.trays !== 0 || !actionState.result.value.focused) {
       throw new Error(`tray action did not confirm, close, and restore focus: ${JSON.stringify(actionState.result.value)}`);
     }
-    console.log("task action tray: expands left, one open, Escape/outside/action dismissal and focus restoration passed");
+
+    await evaluate("document.querySelectorAll('.task-actions-trigger')[0].click(); new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    await evaluate("document.querySelector('#refresh-task-context').focus(); document.querySelector('#refresh-task-context').click(); new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    const contextState = await evaluate("({ trays: document.querySelectorAll('.task-action-tray').length, focused: document.activeElement?.id, overflow: document.querySelectorAll('.task-actions.is-overflow').length, actions: document.querySelectorAll('.task-main')[1].querySelector('.task-actions-probe').children.length })");
+    if (contextState.result.value.trays !== 0 || contextState.result.value.focused !== "refresh-task-context" || contextState.result.value.overflow !== 2 || contextState.result.value.actions !== 3) {
+      throw new Error(`retained row context refresh did not dismiss without restoring hidden trigger focus: ${JSON.stringify(contextState.result.value)}`);
+    }
+
+    await evaluate("document.querySelectorAll('.task-actions-trigger')[0].click(); new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    await evaluate("document.querySelector('.task-action-tray [title=\"Edit task\"]').click(); new Promise((resolve) => setTimeout(resolve, 50))");
+    const editState = await evaluate("({ trays: document.querySelectorAll('.task-action-tray').length, dialogOpen: Boolean(document.querySelector('.task-editor[open]')), focused: document.activeElement?.classList.contains('editor-title') })");
+    if (editState.result.value.trays !== 0 || !editState.result.value.dialogOpen || !editState.result.value.focused) {
+      throw new Error(`Edit from tray did not preserve editor focus: ${JSON.stringify(editState.result.value)}`);
+    }
+    await evaluate("document.querySelector('.task-editor[open] .editor-done').click(); new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+
+    await evaluate("document.querySelectorAll('.task-actions-trigger')[0].click(); new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    await evaluate("document.querySelector('.task-action-tray [title=\"Break down task\"]').click(); new Promise((resolve) => setTimeout(resolve, 50))");
+    const breakdownState = await evaluate("({ trays: document.querySelectorAll('.task-action-tray').length, dialogOpen: Boolean(document.querySelector('.task-editor[open]')), disclosureOpen: Boolean(document.querySelector('.task-editor[open] .editor-disclosure:nth-of-type(2)[open]')), focused: document.activeElement?.matches('.task-editor[open] textarea') })");
+    if (breakdownState.result.value.trays !== 0 || !breakdownState.result.value.dialogOpen || !breakdownState.result.value.disclosureOpen || !breakdownState.result.value.focused) {
+      throw new Error(`Breakdown from tray did not preserve disclosure focus: ${JSON.stringify(breakdownState.result.value)}`);
+    }
+    console.log("task action tray: geometry, dismissal, retained-row refresh, confirmation, and Edit/Breakdown focus passed");
   } finally {
     page.close();
   }
