@@ -1,15 +1,18 @@
 import render from "preact-render-to-string";
 import { describe, expect, it } from "vitest";
 import { canonicalRules, rankBetween, type Task } from "@todorant/domain";
-import { applyDisclosureAction, canReorderPlanningTasks, isActionableOn, Landing, planningReorderHelp, productDate, requiresPlanningOn, scheduleForNewTask, TaskRow, Workspace } from "./app.js";
+import { applyDisclosureAction, canReorderPlanningTasks, compactControlGeometry, isActionableOn, Landing, planningReorderHelp, productDate, requiresPlanningOn, scheduleForNewTask, TaskRow, Workspace } from "./app.js";
 import { tasks } from "./sync.js";
 
 describe("public landing", () => {
   it("stays simple and exposes the exact headline with email actions", () => {
     const html = render(<Landing onAuthenticated={() => undefined} />);
     expect(html).toContain("The todo manager your friends told you about");
+    expect(html).toContain('src="/img/logo.svg"');
+    expect(html).toContain('alt="Todorant"');
     expect(html).toContain("Sign up");
     expect(html).toContain("Log in");
+    expect(html).toContain('class="compact-control primary"');
     expect(html).not.toContain("feature-grid");
   });
 });
@@ -64,6 +67,8 @@ describe("authenticated parity surface", () => {
     expect(workspace).toContain("Report");
     expect(workspace).toContain("Delegation");
     expect(workspace).toContain("Mobile Todorant workflow");
+    expect(workspace).toContain('src="/img/logo-small.svg"');
+    expect(workspace).toContain('aria-label="Todorant — go to Current"');
     const primaryNavigation = workspace.match(/<nav class="primary-nav"[\s\S]*?<\/nav>/u)?.[0] ?? "";
     expect(primaryNavigation).toContain("Current");
     expect(primaryNavigation).toContain("Planning");
@@ -72,6 +77,7 @@ describe("authenticated parity surface", () => {
     expect(workspace).toContain("More destinations and settings");
     expect(workspace).toContain("Sync ");
     expect(workspace).toContain("mobile-add");
+    expect(workspace).toContain('class="compact-control add-context"');
     expect(workspace).not.toContain(">Today</button>");
     expect(workspace).not.toContain("Epics");
 
@@ -89,6 +95,7 @@ describe("authenticated parity surface", () => {
     expect(row).toContain("1 redistribution");
     expect(row).toContain('class="task-editor"');
     expect(row).toContain("Saved locally · Sync");
+    expect(row).toContain('class="compact-control editor-done primary"');
     expect(row).toContain(">Done</button>");
     expect(row).toContain("Planning &amp; ordering");
     expect(row).toContain("Tags &amp; behavior");
@@ -107,6 +114,8 @@ describe("authenticated parity surface", () => {
     expect(compactRow).toContain('class="task-title"');
     expect(compactRow).toContain('class="check-visual"');
     expect(compactRow).toContain('aria-label="Complete Plan launch"');
+    expect(compactRow).toContain('class="overdue-marker"');
+    expect(compactRow).toContain('aria-label="Overdue task"');
     expect(compactRow).toContain('<svg class="icon"');
     expect(compactRow).not.toContain('class="task-editor"');
 
@@ -138,6 +147,11 @@ describe("authenticated parity surface", () => {
     expect(planning).toContain('class="planning-group is-overdue-group"');
     expect(planning).not.toContain("Local-first · revisioned history");
     expect(planning).not.toContain("Add here");
+  });
+
+  it("keeps compact chrome inside 44px targets and uses dots instead of overdue borders", () => {
+    expect(compactControlGeometry).toEqual({ hitTargetPx: 44, chromeInsetPx: 5, visualHeightPx: 34 });
+    expect(compactControlGeometry.hitTargetPx - (2 * compactControlGeometry.chromeInsetPx)).toBe(compactControlGeometry.visualHeightPx);
   });
 
   it("applies View options and closes their disclosure", () => {

@@ -31,6 +31,8 @@ const enabled = (settings: ProductSettings, key: string): boolean => settings[ke
 
 type IconName = "calendar" | "check" | "close" | "focus" | "lock" | "more" | "plus" | "repeat" | "search" | "skip" | "view";
 
+export const compactControlGeometry = { hitTargetPx: 44, chromeInsetPx: 5, visualHeightPx: 34 } as const;
+
 export function Icon({ name }: { name: IconName }) {
   const paths: Record<IconName, JSX.Element> = {
     calendar: <><rect x="3" y="4.5" width="14" height="13" rx="2" /><path d="M6.5 2.5v4M13.5 2.5v4M3 8.5h14" /></>,
@@ -82,7 +84,7 @@ export function Landing({ onAuthenticated }: { onAuthenticated: (session: Sessio
   return (
     <main class="landing">
       <div class="landing-inner">
-        <span class="wordmark">todorant</span>
+        <img class="brand-logo landing-logo" src="/img/logo.svg" alt="Todorant" width="1486" height="302" />
         <h1>The todo manager your friends told you about</h1>
         {mode ? (
           <form class="auth-card" onSubmit={submit}>
@@ -101,15 +103,15 @@ export function Landing({ onAuthenticated }: { onAuthenticated: (session: Sessio
               />
             </label>
             {error && <p class="error" role="alert">{error}</p>}
-            <button class="primary" disabled={busy} type="submit">
+            <button class="compact-control primary" disabled={busy} type="submit">
               {busy ? "Working…" : mode === "signup" ? "Create account" : "Log in"}
             </button>
-            <button class="quiet" type="button" onClick={() => setMode(null)}>Back</button>
+            <button class="compact-control quiet" type="button" onClick={() => setMode(null)}>Back</button>
           </form>
         ) : (
           <div class="landing-actions">
-            <button class="primary" onClick={() => setMode("signup")}>Sign up</button>
-            <button class="secondary" onClick={() => setMode("login")}>Log in</button>
+            <button class="compact-control primary" onClick={() => setMode("signup")}>Sign up</button>
+            <button class="compact-control secondary" onClick={() => setMode("login")}>Log in</button>
           </div>
         )}
       </div>
@@ -324,10 +326,11 @@ export function TaskRow({
       setDelegationError(error instanceof Error ? error.message : "Unable to revoke this delegation");
     }
   };
+  const overdue = requiresPlanningOn(task, productDate(settings.startTimeOfDay));
 
   return (
     <li
-      class={`task ${task.completedAt ? "is-complete" : ""} ${current ? "is-current" : ""} ${requiresPlanningOn(task, productDate(settings.startTimeOfDay)) ? "is-overdue" : ""} ${reorderEnabled ? "is-reorderable" : ""}`}
+      class={`task ${task.completedAt ? "is-complete" : ""} ${current ? "is-current" : ""} ${overdue ? "is-overdue" : ""} ${reorderEnabled ? "is-reorderable" : ""}`}
       draggable={reorderEnabled}
       onDragStart={onDragStart}
       onDragOver={(event) => { if (reorderEnabled) event.preventDefault(); }}
@@ -342,6 +345,7 @@ export function TaskRow({
         >
           <span class="check-visual" aria-hidden="true">{task.completedAt ? <Icon name="check" /> : null}</span>
         </button>
+        {overdue && <span class="overdue-marker" role="img" aria-label="Overdue task" title="Overdue task" />}
         <button
           class="task-title"
           aria-label={`Edit ${task.text}`}
@@ -363,7 +367,7 @@ export function TaskRow({
           <div class="editor-shell">
             <header class="editor-header">
               <div><span class="eyebrow">Task editor</span><h2 id={`task-editor-title-${task.id}`}>Edit task</h2><p class="editor-save-state" role="status">Saved locally · Sync {connection.value}{pendingCount.value ? ` · ${pendingCount.value} queued` : ""}</p></div>
-              <div class="editor-header-actions"><button class="editor-done primary" onClick={() => editor.current?.close()}>Done</button><button class="icon-button" aria-label="Close task editor" onClick={() => editor.current?.close()}><Icon name="close" /></button></div>
+              <div class="editor-header-actions"><button class="compact-control editor-done primary" onClick={() => editor.current?.close()}>Done</button><button class="icon-button" aria-label="Close task editor" onClick={() => editor.current?.close()}><Icon name="close" /></button></div>
             </header>
             <div class="editor-content">
               <section class="editor-section editor-primary" aria-labelledby={`basics-${task.id}`}>
@@ -751,21 +755,21 @@ export function Workspace({ session, logout, initialView = "current" }: { sessio
   return (
     <div class="shell">
       <header class="topbar">
-        <button class="wordmark wordmark-button" onClick={() => setFilter("current")}>todorant</button>
+        <button class="wordmark-button" aria-label="Todorant — go to Current" onClick={() => setFilter("current")}><img class="brand-logo shell-logo" src="/img/logo-small.svg" alt="" aria-hidden="true" width="118" height="24" /></button>
         <nav class="primary-nav" aria-label="Primary Todorant workflow">
           {([ ["current", "Current"], ["planning", "Planning"] ] as const).map(([view, label]) => (
-            <button key={view} class={filter === view || (view === "planning" && filter === "today") ? "active" : ""} aria-current={filter === view || (view === "planning" && filter === "today") ? "page" : undefined} aria-keyshortcuts={view === "current" ? "C" : view === "planning" ? "P" : undefined} onClick={() => setFilter(view)}>{label}</button>
+            <button key={view} class={`compact-control ${filter === view || (view === "planning" && filter === "today") ? "active" : ""}`} aria-current={filter === view || (view === "planning" && filter === "today") ? "page" : undefined} aria-keyshortcuts={view === "current" ? "C" : view === "planning" ? "P" : undefined} onClick={() => setFilter(view)}>{label}</button>
           ))}
         </nav>
         <div class="top-actions">
-          <details class="more-menu"><summary aria-label="More destinations and settings"><Icon name="more" /><span>More</span></summary><div class="menu-panel"><button onClick={(event) => chooseView("reports", event)}>Report</button><button onClick={(event) => chooseView("delegation", event)}>Delegation</button><button aria-keyshortcuts="?" onClick={(event) => { setRulesOpen(true); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Rules</button><button onClick={(event) => { setSettingsOpen(true); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Settings</button><span class="menu-separator" /><p class={`menu-status ${connection.value}`}><span aria-hidden="true" />Sync {connection.value}{pendingCount.value ? ` · ${pendingCount.value} queued` : ""}</p><button onClick={(event) => chooseView("all", event)}>All tasks</button><button onClick={(event) => chooseView("trash", event)}>Trash</button><button onClick={logout}>Log out</button></div></details>
+          <details class="more-menu"><summary class="compact-control" aria-label="More destinations and settings"><Icon name="more" /><span>More</span></summary><div class="menu-panel"><button onClick={(event) => chooseView("reports", event)}>Report</button><button onClick={(event) => chooseView("delegation", event)}>Delegation</button><button aria-keyshortcuts="?" onClick={(event) => { setRulesOpen(true); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Rules</button><button onClick={(event) => { setSettingsOpen(true); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Settings</button><span class="menu-separator" /><p class={`menu-status ${connection.value}`}><span aria-hidden="true" />Sync {connection.value}{pendingCount.value ? ` · ${pendingCount.value} queued` : ""}</p><button onClick={(event) => chooseView("all", event)}>All tasks</button><button onClick={(event) => chooseView("trash", event)}>Trash</button><button onClick={logout}>Log out</button></div></details>
         </div>
       </header>
       <main class="workspace">
-        <div class="list-header"><div class="list-heading"><span class="eyebrow">{filter === "current" ? "One thing at a time" : filter === "planning" || filter === "today" ? "Trust the system" : "Todorant"}</span><h1>{filter === "reports" ? "Report" : filter === "today" ? "Planning · Today" : `${filter[0]?.toUpperCase()}${filter.slice(1)}`}</h1></div><div class="header-actions">{!(["reports", "trash"] as TaskView[]).includes(filter) && <button class="add-context" aria-keyshortcuts="A" onClick={openGlobalAdd}><Icon name="plus" />Add task</button>}</div></div>
+        <div class="list-header"><div class="list-heading"><span class="eyebrow">{filter === "current" ? "One thing at a time" : filter === "planning" || filter === "today" ? "Trust the system" : "Todorant"}</span><h1>{filter === "reports" ? "Report" : filter === "today" ? "Planning · Today" : `${filter[0]?.toUpperCase()}${filter.slice(1)}`}</h1></div><div class="header-actions">{!(["reports", "trash"] as TaskView[]).includes(filter) && <button class="compact-control add-context" aria-keyshortcuts="A" onClick={openGlobalAdd}><Icon name="plus" />Add task</button>}</div></div>
         {filter === "current" && <section class="day-progress" aria-label={`${completedToday} of ${todayTasks.length} tasks completed today`}><span>{completedToday} / {todayTasks.length} today</span><progress max={Math.max(todayTasks.length, 1)} value={completedToday} /></section>}
         {filter === "current" && planningRequired && <aside class="planning-lock"><strong>Planning comes first.</strong><span>Redistribute overdue work before returning to Current.</span><button class="primary" onClick={() => setFilter("planning")}>Open Planning</button></aside>}
-        {(filter === "planning" || filter === "today") && <div class="planning-tools" role="toolbar" aria-label="Planning controls"><button class={searchOpen || search ? "active" : ""} aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); if (!searchOpen) window.setTimeout(() => searchInput.current?.focus(), 0); }}><Icon name="search" /><span>Search</span></button>{searchOpen && <div class="planning-search"><input ref={searchInput} type="search" value={search} placeholder="Search tasks, notes, and tags" aria-label="Search tasks" onInput={(event) => setSearch(event.currentTarget.value)} /><button class="icon-button" aria-label="Close search" onClick={() => { setSearchOpen(false); setSearch(""); }}><Icon name="close" /></button></div>}<details class="view-menu"><summary><Icon name="view" />View{planningActiveStates.length > 0 && <span class="filter-count" aria-label={`${planningActiveStates.length} active view filters`}>{planningActiveStates.length}</span>}</summary><div class="view-popover"><button aria-pressed={filter === "today"} onClick={(event) => applyDisclosureAction(() => setFilter(filter === "today" ? "planning" : "today"), event.currentTarget)}>{filter === "today" ? "Show all dates" : "Today only"}</button><label class="month-control">Calendar month<input type="month" value={planningMonth} onInput={(event) => applyDisclosureAction(() => { setPlanningMonth(event.currentTarget.value); setFilter("planning"); }, event.currentTarget)} /></label><button aria-pressed={showCompleted} onClick={(event) => applyDisclosureAction(() => setShowCompleted(!showCompleted), event.currentTarget)}>{showCompleted ? "Hide completed" : "Include completed"}</button><button aria-pressed={reorderEnabled} title={planningReorderHelp} onClick={(event) => applyDisclosureAction(() => { setFilter("planning"); setReorderEnabled(!reorderEnabled); }, event.currentTarget)}>{reorderEnabled ? "Finish ordering" : "Reorder tasks"}</button></div></details>{planningActiveStates.map((state) => <span class="active-filter-badge" key={state}>{state}</span>)}</div>}
+        {(filter === "planning" || filter === "today") && <div class="planning-tools" role="toolbar" aria-label="Planning controls"><button class={`compact-control ${searchOpen || search ? "active" : ""}`} aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); if (!searchOpen) window.setTimeout(() => searchInput.current?.focus(), 0); }}><Icon name="search" /><span>Search</span></button>{searchOpen && <div class="planning-search"><input ref={searchInput} type="search" value={search} placeholder="Search tasks, notes, and tags" aria-label="Search tasks" onInput={(event) => setSearch(event.currentTarget.value)} /><button class="icon-button" aria-label="Close search" onClick={() => { setSearchOpen(false); setSearch(""); }}><Icon name="close" /></button></div>}<details class="view-menu"><summary class="compact-control"><Icon name="view" />View{planningActiveStates.length > 0 && <span class="filter-count" aria-label={`${planningActiveStates.length} active view filters`}>{planningActiveStates.length}</span>}</summary><div class="view-popover"><button aria-pressed={filter === "today"} onClick={(event) => applyDisclosureAction(() => setFilter(filter === "today" ? "planning" : "today"), event.currentTarget)}>{filter === "today" ? "Show all dates" : "Today only"}</button><label class="month-control">Calendar month<input type="month" value={planningMonth} onInput={(event) => applyDisclosureAction(() => { setPlanningMonth(event.currentTarget.value); setFilter("planning"); }, event.currentTarget)} /></label><button aria-pressed={showCompleted} onClick={(event) => applyDisclosureAction(() => setShowCompleted(!showCompleted), event.currentTarget)}>{showCompleted ? "Hide completed" : "Include completed"}</button><button aria-pressed={reorderEnabled} title={planningReorderHelp} onClick={(event) => applyDisclosureAction(() => { setFilter("planning"); setReorderEnabled(!reorderEnabled); }, event.currentTarget)}>{reorderEnabled ? "Finish ordering" : "Reorder tasks"}</button></div></details>{planningActiveStates.map((state) => <span class="active-filter-badge" key={state}>{state}</span>)}</div>}
         {reorderEnabled && filter === "planning" && <p class="meta">Drag tasks within the same date or month group. Change a task’s schedule to move it between groups.</p>}
         {!(["current", "reports", "planning", "today"] as TaskView[]).includes(filter) && <input class="search" type="search" value={search} placeholder="Search tasks, notes, and tags" aria-label="Search tasks" onInput={(event) => setSearch(event.currentTarget.value)} />}
         {addOpen && (
@@ -774,8 +778,8 @@ export function Workspace({ session, logout, initialView = "current" }: { sessio
             {addMonth && !addDate && <span class="meta">Planning month: {addMonth}</span>}
             <input name="date" aria-label="New task date" type="date" value={addDate} onInput={(event) => setAddDate(event.currentTarget.value)} />
             <input name="time" aria-label="New task exact time" type="time" />
-            <button class="primary" type="submit">Add</button>
-            <button type="button" onClick={() => { setAddOpen(false); setAddDate(""); setAddMonth(""); }}>Cancel</button>
+            <button class="compact-control primary" type="submit">Add</button>
+            <button class="compact-control" type="button" onClick={() => { setAddOpen(false); setAddDate(""); setAddMonth(""); }}>Cancel</button>
           </form>
         )}
         {filter === "planning" && <p class="meta">Weeks start {Number(settings.firstDayOfWeek ?? 1) === 0 ? "Sunday" : Number(settings.firstDayOfWeek ?? 1) === 6 ? "Saturday" : "Monday"} · Todorant day starts {String(settings.startTimeOfDay ?? "00:00")}</p>}
