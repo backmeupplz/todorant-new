@@ -100,7 +100,7 @@ nav button.active { color: var(--ink); position: relative; }
 .task.is-current { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: 0 14px 35px rgb(28 24 20 / .07); }
 .task.is-reorderable { cursor: grab; }
 .task.is-reorderable:active { cursor: grabbing; opacity: .7; }
-.task-main { align-items: center; display: flex; gap: 6px; height: 48px; padding: 2px 4px; }
+.task-main { align-items: center; display: flex; gap: 6px; height: 48px; padding: 2px 4px; position: relative; }
 .is-current .task-main { min-height: 82px; padding: 14px; }
 .check { align-items: center; background: transparent; border: 0; display: flex; flex: 0 0 44px; height: 44px; justify-content: center; padding: 0; width: 44px; }
 .check-visual { align-items: center; border: 1.5px solid var(--line-strong); border-radius: 50%; display: flex; height: 22px; justify-content: center; width: 22px; }
@@ -117,17 +117,26 @@ nav button.active { color: var(--ink); position: relative; }
 .date, .meta { color: var(--muted); font-size: .7rem; }
 .date { white-space: nowrap; }
 .icon-button { border-color: transparent; flex: 0 0 44px; padding: 5px; }
-.task-actions { align-items: center; display: flex; flex: 0 0 auto; gap: 0; }
-.task-action { color: var(--muted); min-width: 44px; }
-.task-action:hover { background: var(--soft); color: var(--ink); }
+.task-actions { align-items: center; display: flex; flex: 0 0 auto; gap: 0; position: relative; z-index: 2; }
+.task-actions.is-overflow { flex-basis: 44px; width: 44px; }
+.task-actions-direct, .task-action-tray, .task-actions-probe { align-items: center; display: flex; }
+.task-action { background-clip: padding-box; border: 6px solid transparent; color: var(--muted); flex: 0 0 44px; height: 44px; min-width: 44px; padding: 6px; }
+.task-action:hover { background-color: var(--soft); color: var(--ink); }
 .task-action.danger { color: var(--muted); }
 .task-action.danger:hover, .task-action.danger:focus-visible { color: var(--danger); }
+.task-actions-trigger { background-color: var(--surface); }
+.task-action-tray { background: var(--surface); border-radius: var(--radius-sm); box-shadow: -14px 0 22px 6px var(--surface); position: absolute; right: 0; top: 0; z-index: 1; }
+.task-actions-probe { pointer-events: none; position: absolute; right: 0; visibility: hidden; }
+.task-actions-probe > span { flex: 0 0 44px; height: 44px; }
 .detail-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .inline-fields { display: grid; gap: 6px; grid-template-columns: 1fr auto; }
 .history { color: var(--muted); font-size: .75rem; margin: 8px 0 0; padding-left: 20px; }
 .danger { color: var(--danger); }
 .meta { margin: 0; }
 .empty { color: var(--muted); padding: 46px 10px; text-align: center; }
+.task-action-fixture { margin: 0 auto; padding: 32px 0; width: min(var(--content-width), calc(100% - 20px)); }
+.task-action-fixture h1 { font-size: 1.2rem; margin: 0 0 4px; }
+.task-action-fixture > p { color: var(--muted); font-size: .78rem; margin: 0 0 18px; }
 .trash-row { align-items: center; display: flex; justify-content: space-between; padding: 10px 12px; }
 .conflicts { background: #fff2cd; border: 1px solid #e2c978; border-radius: 10px; color: #3b321a; display: grid; font-size: .8rem; gap: 8px; margin: 0 0 14px; padding: 11px; }
 .conflicts div { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; }
@@ -258,4 +267,9 @@ nav button.active { color: var(--ink); position: relative; }
 @media (prefers-reduced-motion: no-preference) {
   button, .task { transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease; }
   button:active { transform: translateY(1px); }
+  .task-action-tray { animation: task-action-tray-in 140ms ease-out; }
+}
+
+@keyframes task-action-tray-in {
+  from { clip-path: inset(0 0 0 100%); opacity: 0; }
 }

@@ -2,7 +2,7 @@ import render from "preact-render-to-string";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { canonicalRules, rankBetween, type Task } from "@todorant/domain";
-import { applyDisclosureAction, canReorderPlanningTasks, compactControlGeometry, deleteTaskAfterConfirmation, editorSaveStatus, isActionableOn, Landing, planningReorderHelp, productDate, requiresPlanningOn, scheduleForNewTask, taskRowActionAvailability, TaskRow, Workspace } from "./app.js";
+import { applyDisclosureAction, canReorderPlanningTasks, compactControlGeometry, deleteTaskAfterConfirmation, editorSaveStatus, isActionableOn, Landing, planningReorderHelp, productDate, requiresPlanningOn, scheduleForNewTask, shouldCloseTaskActionTrayForAnotherRow, shouldRestoreTaskActionTrigger, taskActionsFit, taskRowActionAvailability, TaskRow, Workspace } from "./app.js";
 import { conflicts, connection, pendingCount, syncErrors, tasks } from "./sync.js";
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
@@ -217,6 +217,41 @@ describe("authenticated parity surface", () => {
     ]);
   });
 
+  it("uses measured geometry for direct actions versus overflow without title-length heuristics", () => {
+    expect(taskActionsFit({
+      rowWidth: 900,
+      titleVisibleWidth: 620,
+      titleContentWidth: 240,
+      visibleActionsWidth: 176,
+      fullActionsWidth: 176
+    })).toBe(true);
+    expect(taskActionsFit({
+      rowWidth: 390,
+      titleVisibleWidth: 128,
+      titleContentWidth: 540,
+      visibleActionsWidth: 176,
+      fullActionsWidth: 176
+    })).toBe(false);
+    expect(taskActionsFit({
+      rowWidth: 390,
+      titleVisibleWidth: 260,
+      titleContentWidth: 540,
+      visibleActionsWidth: 44,
+      fullActionsWidth: 176
+    })).toBe(false);
+  });
+
+  it("coordinates one action tray and restores focus only for Escape or completed quick actions", () => {
+    expect(shouldCloseTaskActionTrayForAnotherRow("task-a", "task-b")).toBe(true);
+    expect(shouldCloseTaskActionTrayForAnotherRow("task-a", "task-a")).toBe(false);
+    expect(shouldRestoreTaskActionTrigger("escape")).toBe(true);
+    expect(shouldRestoreTaskActionTrigger("action")).toBe(true);
+    expect(shouldRestoreTaskActionTrigger("outside")).toBe(false);
+    expect(shouldRestoreTaskActionTrigger("another-row")).toBe(false);
+    expect(shouldRestoreTaskActionTrigger("context-change")).toBe(false);
+    expect(shouldRestoreTaskActionTrigger("resize")).toBe(false);
+  });
+
   it("moves icon-only Planning controls into the canonical topbar", () => {
     const value = task();
     const future = task({
@@ -278,7 +313,9 @@ describe("authenticated parity surface", () => {
     expect(styles).toMatch(/\.task-main\s*\{[^}]*height:\s*48px/gu);
     expect(styles).toMatch(/\.task-title\s*\{[^}]*flex:\s*1 1 auto;[^}]*min-width:\s*0;[^}]*text-overflow:\s*ellipsis/gu);
     expect(styles).toMatch(/\.task-actions\s*\{[^}]*display:\s*flex;[^}]*flex:\s*0 0 auto/gu);
-    expect(styles).toMatch(/\.task-action\s*\{[^}]*min-width:\s*44px/gu);
+    expect(styles).toMatch(/\.task-action\s*\{[^}]*flex:\s*0 0 44px;[^}]*height:\s*44px;[^}]*min-width:\s*44px/gu);
+    expect(styles).toMatch(/\.task-action-tray\s*\{[^}]*position:\s*absolute;[^}]*right:\s*0;[^}]*top:\s*0/gu);
+    expect(styles).toMatch(/\.task-actions-probe\s*\{[^}]*position:\s*absolute;[^}]*visibility:\s*hidden/gu);
     expect(styles).toMatch(/\.icon\s*\{[^}]*height:\s*18px;[^}]*width:\s*18px/gu);
     expect(styles).toMatch(/\.planning-group\s*>\s*header\s*\{[^}]*border-bottom:\s*1px solid var\(--line\);[^}]*height:\s*26px;[^}]*margin-bottom:\s*7px/gu);
     expect(styles).toMatch(/\.planning-groups\s*\{[^}]*gap:\s*15px/gu);
