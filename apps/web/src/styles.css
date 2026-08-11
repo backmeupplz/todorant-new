@@ -10,6 +10,7 @@
   --line-strong: #c9cec6;
   --accent: #f45f22;
   --accent-ink: #fff;
+  --planning-add-ink: #1b0c04;
   --soft: #fff1e9;
   --blue: #3366ff;
   --danger: #d94b43;
@@ -28,6 +29,7 @@
   --line-strong: #535b51;
   --accent: #ff7b3b;
   --accent-ink: #1b0c04;
+  --planning-add-ink: #1b0c04;
   --soft: #44291c;
   --blue: #7392ff;
   --danger: #f08d80;
@@ -132,6 +134,7 @@ nav button.active { color: var(--ink); position: relative; }
 .planning-lock button { grid-column: 2; grid-row: 1 / span 2; }
 .planning-tools { align-items: center; display: flex; flex-wrap: nowrap; gap: 4px; }
 .planning-tools > button:not(.add-context), .view-menu > summary { background: var(--surface); }
+.planning-tools > .add-context { background: var(--accent); color: var(--planning-add-ink); }
 .planning-tools > button, .view-menu > summary { font-size: .78rem; }
 .planning-tools button[aria-pressed="true"], .planning-tools button.active { background: var(--soft); border-color: transparent; box-shadow: inset 0 0 0 1px var(--accent); color: var(--accent); }
 .planning-search { display: flex; gap: 4px; margin-bottom: 8px; width: 100%; }

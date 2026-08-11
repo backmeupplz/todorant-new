@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <style>* { transition: none !important; }</style>
+    <title>Planning Add computed-style fixture</title>
+  </head>
+  <body>
+    <div class="planning-tools">
+      <button class="compact-control add-context" type="button">
+        <svg class="icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+        <span>Add task</span>
+      </button>
+    </div>
+    <pre id="computed-styles"></pre>
+    <script>
+      const button = document.querySelector(".planning-tools > .add-context");
+      const output = document.querySelector("#computed-styles");
+      const resolveColor = (value) => {
+        const probe = document.createElement("span");
+        probe.style.color = value;
+        document.body.append(probe);
+        const resolved = getComputedStyle(probe).color;
+        probe.remove();
+        return resolved;
+      };
+      const snapshot = (theme) => {
+        document.documentElement.classList.toggle("dark", theme === "dark");
+        const buttonStyles = getComputedStyle(button);
+        const rootStyles = getComputedStyle(document.documentElement);
+        return {
+          theme,
+          background: buttonStyles.backgroundColor,
+          foreground: buttonStyles.color,
+          accent: resolveColor(rootStyles.getPropertyValue("--accent")),
+          surface: resolveColor(rootStyles.getPropertyValue("--surface"))
+        };
+      };
+      output.textContent = JSON.stringify([snapshot("light"), snapshot("dark")]);
+    </script>
+  </body>
+</html>
