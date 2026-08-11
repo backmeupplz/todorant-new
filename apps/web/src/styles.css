@@ -131,7 +131,7 @@ nav button.active { color: var(--ink); position: relative; }
 .planning-lock strong, .planning-lock span { grid-column: 1; }
 .planning-lock button { grid-column: 2; grid-row: 1 / span 2; }
 .planning-tools { align-items: center; display: flex; flex-wrap: nowrap; gap: 4px; }
-.planning-tools > button, .view-menu > summary { background: var(--surface); }
+.planning-tools > button:not(.add-context), .view-menu > summary { background: var(--surface); }
 .planning-tools > button, .view-menu > summary { font-size: .78rem; }
 .planning-tools button[aria-pressed="true"], .planning-tools button.active { background: var(--soft); border-color: transparent; box-shadow: inset 0 0 0 1px var(--accent); color: var(--accent); }
 .planning-search { display: flex; gap: 4px; margin-bottom: 8px; width: 100%; }
@@ -209,7 +209,7 @@ nav button.active { color: var(--ink); position: relative; }
   .topbar { gap: 5px; grid-template-columns: 1fr; min-height: 48px; padding: 0 10px; }
   .topbar .primary-nav { display: none; }
   .top-actions { display: none; }
-  .wordmark-button { justify-self: center; }
+  .wordmark-button { justify-self: start; }
   .shell-logo { height: 20px; width: auto; }
   .workspace { padding: 10px 10px 78px; }
   .quick-add { grid-template-columns: 1fr 1fr; }

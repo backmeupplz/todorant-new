@@ -185,6 +185,13 @@ describe("authenticated parity surface", () => {
     expect(styles).toMatch(/@media \(max-width:\s*680px\)[\s\S]*?\.group-more\s*\{[^}]*display:\s*block/gu);
   });
 
+  it("keeps the desktop Add accent and left-aligns the mobile wordmark", () => {
+    expect(styles).toMatch(/\.add-context\s*\{[^}]*background:\s*var\(--accent\);[^}]*color:\s*var\(--accent-ink\)/gu);
+    expect(styles).toMatch(/\.planning-tools\s*>\s*button:not\(\.add-context\)[^{]*\{[^}]*background:\s*var\(--surface\)/gu);
+    expect(styles).not.toMatch(/\.planning-tools\s*>\s*button\s*,\s*\.view-menu\s*>\s*summary\s*\{[^}]*background/gu);
+    expect(styles).toMatch(/@media \(max-width:\s*680px\)[\s\S]*?\.wordmark-button\s*\{[^}]*justify-self:\s*start/gu);
+  });
+
   it("only announces actionable editor save states", () => {
     expect(editorSaveStatus({ connectionState: "live", queued: 0, hasConflict: false, hasError: false })).toBeNull();
     expect(editorSaveStatus({ connectionState: "syncing", queued: 2, hasConflict: false, hasError: false })).toBe("Saving… · 2 queued");
