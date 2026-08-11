@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createServer as createViteServer } from "vite";
 
 const candidates = [
   process.env.CHROME_BIN,
@@ -54,26 +54,19 @@ const contrast = (first, second) => {
   return (lighter + 0.05) / (darker + 0.05);
 };
 
-const fixture = resolve(import.meta.dirname, "add-context.fixture.html");
-const stylesheet = resolve(import.meta.dirname, "../src/styles.css");
-const server = createServer(async (request, response) => {
-  if (request.url === "/src/styles.css") {
-    response.writeHead(200, { "Content-Type": "text/css" });
-    response.end(await readFile(stylesheet));
-    return;
-  }
-  response.writeHead(200, { "Content-Type": "text/html" });
-  response.end(await readFile(fixture));
-});
+const webRoot = resolve(import.meta.dirname, "..");
 const profile = await mkdtemp(join(tmpdir(), "todorant-add-contrast-"));
 let browserConnection;
 let chromeProcess;
+let viteServer;
 
 try {
-  await new Promise((resolveListening) => server.listen(0, "127.0.0.1", resolveListening));
-  const address = server.address();
+  viteServer = await createViteServer({ root: webRoot, logLevel: "error", server: { host: "127.0.0.1", port: 0 } });
+  await viteServer.listen();
+  const address = viteServer.httpServer?.address();
   if (!address || typeof address === "string") throw new Error("Fixture server did not expose a local port");
   const url = `http://127.0.0.1:${address.port}/scripts/add-context.fixture.html`;
+  const taskActionsUrl = `http://127.0.0.1:${address.port}/task-actions.fixture.html`;
 
   chromeProcess = spawn(chrome, [
     "--headless=new",
@@ -110,12 +103,16 @@ try {
   try {
     await page.send("Page.enable");
     await page.send("Emulation.setDeviceMetricsOverride", { width: 1000, height: 900, deviceScaleFactor: 1, mobile: false });
+    const waitFor = async (expression) => {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const readiness = await page.send("Runtime.evaluate", { expression, returnByValue: true });
+        if (readiness.result.value) return;
+        await delay(50);
+      }
+      throw new Error(`Timed out waiting for fixture condition: ${expression}`);
+    };
     await page.send("Page.navigate", { url });
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const readiness = await page.send("Runtime.evaluate", { expression: "document.readyState", returnByValue: true });
-      if (readiness.result.value === "complete") break;
-      await delay(50);
-    }
+    await waitFor("document.readyState === 'complete' && Boolean(document.querySelector('#computed-styles')?.textContent)");
     const evaluated = await page.send("Runtime.evaluate", {
       expression: "document.querySelector('#computed-styles')?.textContent",
       returnByValue: true
@@ -184,33 +181,105 @@ try {
       }
       console.log(`${label} Planning grid: ${snapshot.workspace.width}px, ${planningTopGap}px top gap, 26/7/15/48px rhythm, one persistent Add`);
     };
-    const measureTaskRow = async (label, width, height, mobile) => {
-      await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
-      const measured = await page.send("Runtime.evaluate", {
-        expression: "window.taskRowSnapshot()",
-        returnByValue: true
-      });
-      const snapshot = measured.result.value;
-      if (snapshot.actions.display !== "flex" || snapshot.buttons.length !== 4) {
-        throw new Error(`${label} task actions are not always exposed (${snapshot.actions.display}, ${snapshot.buttons.length} buttons)`);
-      }
-      if (snapshot.row.scrollWidth > snapshot.row.clientWidth || snapshot.row.right > snapshot.viewportWidth) {
-        throw new Error(`${label} task row overflows (${snapshot.row.scrollWidth}/${snapshot.row.clientWidth}, right ${snapshot.row.right}/${snapshot.viewportWidth})`);
-      }
-      if (snapshot.title.right > snapshot.actions.left || snapshot.title.overflow !== "ellipsis") {
-        throw new Error(`${label} task title does not truncate before actions (${snapshot.title.right}/${snapshot.actions.left}, ${snapshot.title.overflow})`);
-      }
-      for (const action of snapshot.buttons) {
-        if (action.display === "none" || action.width < 44 || action.height < 44 || !action.title || !action.label) {
-          throw new Error(`${label} task action fails discoverability geometry: ${JSON.stringify(action)}`);
-        }
-      }
-      console.log(`${label} task row: ${snapshot.row.width}px, title ${snapshot.title.width}px, ${snapshot.buttons.length} exposed 44px actions`);
-    };
     await measurePlanningLayout("desktop", 1000, 900, false);
     await measurePlanningLayout("390×844 mobile", 390, 844, true);
-    await measureTaskRow("desktop", 1000, 900, false);
-    await measureTaskRow("390×844 mobile", 390, 844, true);
+
+    await page.send("Emulation.setDeviceMetricsOverride", { width: 1000, height: 900, deviceScaleFactor: 1, mobile: false });
+    await page.send("Page.navigate", { url: taskActionsUrl });
+    await waitFor("document.querySelectorAll('.task-main').length === 3 && document.querySelectorAll('.task-actions.is-overflow').length === 2");
+
+    const taskActionSnapshot = async () => {
+      const measured = await page.send("Runtime.evaluate", {
+        expression: `(() => {
+          const rows = [...document.querySelectorAll('.task-main')];
+          const rect = (element) => {
+            const value = element.getBoundingClientRect();
+            return { bottom: value.bottom, height: value.height, left: value.left, right: value.right, top: value.top, width: value.width };
+          };
+          return rows.map((row) => {
+            const title = row.querySelector('.task-title');
+            const actions = row.querySelector('.task-actions');
+            const tray = actions.querySelector('.task-action-tray');
+            return {
+              row: { ...rect(row), clientWidth: row.clientWidth, scrollWidth: row.scrollWidth },
+              title: { ...rect(title), overflow: getComputedStyle(title).textOverflow },
+              actions: rect(actions),
+              directCount: actions.querySelectorAll('.task-actions-direct button').length,
+              trigger: actions.querySelector('.task-actions-trigger') ? {
+                ...rect(actions.querySelector('.task-actions-trigger')),
+                expanded: actions.querySelector('.task-actions-trigger').getAttribute('aria-expanded'),
+                label: actions.querySelector('.task-actions-trigger').getAttribute('aria-label'),
+                title: actions.querySelector('.task-actions-trigger').title
+              } : null,
+              tray: tray ? {
+                ...rect(tray),
+                background: getComputedStyle(tray).backgroundColor,
+                buttons: [...tray.querySelectorAll('button')].map((button) => ({ ...rect(button), label: button.getAttribute('aria-label'), title: button.title }))
+              } : null
+            };
+          });
+        })()`,
+        returnByValue: true
+      });
+      return measured.result.value;
+    };
+
+    const verifyClosedRows = (label, rows) => {
+      const [shortRow, ...overflowRows] = rows;
+      if (shortRow.directCount !== 4 || shortRow.trigger) throw new Error(`${label} short row did not preserve four direct actions: ${JSON.stringify(shortRow)}`);
+      for (const row of overflowRows) {
+        if (row.directCount !== 0 || !row.trigger || row.trigger.width < 44 || row.trigger.height < 44 || !row.trigger.label || !row.trigger.title) {
+          throw new Error(`${label} long row did not collapse to one discoverable 44px trigger: ${JSON.stringify(row)}`);
+        }
+        if (row.row.scrollWidth > row.row.clientWidth || row.title.right > row.actions.left || row.title.overflow !== "ellipsis") {
+          throw new Error(`${label} long row overlaps or overflows before opening: ${JSON.stringify(row)}`);
+        }
+      }
+    };
+
+    let taskRows = await taskActionSnapshot();
+    verifyClosedRows("desktop", taskRows);
+    console.log("desktop task actions: short row direct, two long rows collapsed, no overlap");
+
+    await page.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    await waitFor("document.querySelectorAll('.task-actions.is-overflow').length === 2");
+    taskRows = await taskActionSnapshot();
+    verifyClosedRows("390×844 mobile", taskRows);
+    console.log("390×844 mobile task actions: short row direct, two long rows collapsed, no overlap");
+
+    const evaluate = (expression) => page.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+    await evaluate("document.querySelectorAll('.task-actions-trigger')[0].click(); new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    taskRows = await taskActionSnapshot();
+    const openedRow = taskRows[1];
+    if (!openedRow.tray || openedRow.tray.buttons.length !== 4 || openedRow.tray.right > openedRow.row.right || openedRow.tray.height !== 44 || openedRow.tray.background === "rgba(0, 0, 0, 0)") {
+      throw new Error(`mobile action tray is not anchored, opaque, and 44px tall: ${JSON.stringify(openedRow)}`);
+    }
+    for (const action of openedRow.tray.buttons) {
+      if (action.width < 44 || action.height < 44 || !action.label || !action.title) throw new Error(`tray action is not discoverable: ${JSON.stringify(action)}`);
+    }
+
+    await evaluate("document.querySelectorAll('.task-actions-trigger')[1].click(); new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    taskRows = await taskActionSnapshot();
+    if (taskRows[1].tray || !taskRows[2].tray) throw new Error("opening another row did not close the previous action tray");
+
+    await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
+    await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape" });
+    await delay(50);
+    const escapeState = await evaluate("({ trays: document.querySelectorAll('.task-action-tray').length, focused: document.activeElement?.classList.contains('task-actions-trigger') })");
+    if (escapeState.result.value.trays !== 0 || !escapeState.result.value.focused) throw new Error(`Escape did not dismiss and restore trigger focus: ${JSON.stringify(escapeState.result.value)}`);
+
+    await evaluate("document.querySelectorAll('.task-actions-trigger')[0].click(); new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    await evaluate("document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); new Promise((resolve) => requestAnimationFrame(resolve))");
+    const outsideState = await evaluate("document.querySelectorAll('.task-action-tray').length");
+    if (outsideState.result.value !== 0) throw new Error("outside pointer did not dismiss the action tray");
+
+    await evaluate("window.__deleteConfirmed = false; window.confirm = () => { window.__deleteConfirmed = true; return false; }; document.querySelectorAll('.task-actions-trigger')[0].click(); new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    await evaluate("document.querySelector('.task-action-tray .task-action.danger').click(); new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    const actionState = await evaluate("({ confirmed: window.__deleteConfirmed, trays: document.querySelectorAll('.task-action-tray').length, focused: document.activeElement?.classList.contains('task-actions-trigger') })");
+    if (!actionState.result.value.confirmed || actionState.result.value.trays !== 0 || !actionState.result.value.focused) {
+      throw new Error(`tray action did not confirm, close, and restore focus: ${JSON.stringify(actionState.result.value)}`);
+    }
+    console.log("task action tray: expands left, one open, Escape/outside/action dismissal and focus restoration passed");
   } finally {
     page.close();
   }
@@ -222,6 +291,6 @@ try {
   if (chromeProcess?.exitCode === null) {
     await new Promise((resolveExit) => chromeProcess.once("exit", resolveExit));
   }
-  await new Promise((resolveClosed, rejectClosed) => server.close((error) => error ? rejectClosed(error) : resolveClosed()));
+  await viteServer?.close();
   await rm(profile, { recursive: true, force: true });
 }

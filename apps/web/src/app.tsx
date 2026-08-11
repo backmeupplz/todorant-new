@@ -33,6 +33,35 @@ type IconName = "breakdown" | "calendar" | "check" | "close" | "edit" | "focus" 
 
 export const compactControlGeometry = { hitTargetPx: 44, chromeInsetPx: 5, visualHeightPx: 34 } as const;
 
+type TaskActionFitGeometry = {
+  rowWidth: number;
+  titleVisibleWidth: number;
+  titleContentWidth: number;
+  visibleActionsWidth: number;
+  fullActionsWidth: number;
+};
+
+export const taskActionsFit = ({
+  rowWidth,
+  titleVisibleWidth,
+  titleContentWidth,
+  visibleActionsWidth,
+  fullActionsWidth
+}: TaskActionFitGeometry): boolean => {
+  const fixedRowWidth = Math.max(0, rowWidth - titleVisibleWidth - visibleActionsWidth);
+  return fixedRowWidth + titleContentWidth + fullActionsWidth <= rowWidth + 0.5;
+};
+
+export type TaskActionTrayCloseReason = "action" | "another-row" | "context-change" | "escape" | "outside" | "resize";
+
+export const shouldRestoreTaskActionTrigger = (reason: TaskActionTrayCloseReason): boolean =>
+  reason === "action" || reason === "escape";
+
+export const shouldCloseTaskActionTrayForAnotherRow = (taskId: string, openedTaskId: string): boolean =>
+  taskId !== openedTaskId;
+
+const taskActionTrayOpenEvent = "todorant:task-action-tray-open";
+
 type EditorSaveStatusInput = {
   connectionState: "offline" | "syncing" | "live";
   queued: number;
@@ -250,9 +279,17 @@ export function TaskRow({
   const [history, setHistory] = useState<SyncEvent[] | null>(null);
   const [encryptionUnlocked, setEncryptionUnlocked] = useState(task.encryption === null);
   const editor = useRef<HTMLDialogElement>(null);
+  const taskMain = useRef<HTMLDivElement>(null);
+  const taskTitle = useRef<HTMLButtonElement>(null);
+  const taskActions = useRef<HTMLDivElement>(null);
+  const taskActionsProbe = useRef<HTMLSpanElement>(null);
+  const taskActionsTrigger = useRef<HTMLButtonElement>(null);
+  const taskActionTray = useRef<HTMLDivElement>(null);
   const breakdownDisclosure = useRef<HTMLDetailsElement>(null);
   const breakdownInput = useRef<HTMLTextAreaElement>(null);
   const focusBreakdownOnOpen = useRef(false);
+  const [actionsOverflow, setActionsOverflow] = useState(false);
+  const [actionTrayOpen, setActionTrayOpen] = useState(false);
   useEffect(() => {
     if (!expanded) return;
     if (!editor.current?.open) editor.current?.showModal();
@@ -379,6 +416,22 @@ export function TaskRow({
   const date = productDate(settings.startTimeOfDay);
   const rowView = current ? "current" : hideSchedule ? "planning" : "other";
   const rowActions = taskRowActionAvailability(task, rowView, date);
+  const rowActionCount = 2 + Number(rowActions.skip) + Number(rowActions.moveToToday) + Number(rowActions.breakdown);
+  const actionTrayId = `task-action-tray-${task.id}`;
+  const closeActionTray = (reason: TaskActionTrayCloseReason) => {
+    setActionTrayOpen(false);
+    if (shouldRestoreTaskActionTrigger(reason)) {
+      window.requestAnimationFrame(() => taskActionsTrigger.current?.focus());
+    }
+  };
+  const openActionTray = () => {
+    window.dispatchEvent(new CustomEvent<string>(taskActionTrayOpenEvent, { detail: task.id }));
+    setActionTrayOpen(true);
+  };
+  const executeTrayAction = (action: () => void, restoreFocus: boolean) => {
+    closeActionTray(restoreFocus ? "action" : "context-change");
+    action();
+  };
   const openBreakdown = () => {
     focusBreakdownOnOpen.current = true;
     onExpand();
@@ -394,6 +447,81 @@ export function TaskRow({
     hasError: syncErrors.value.some((operation) => operation.taskId === task.id)
   });
 
+  useEffect(() => {
+    const measure = () => {
+      const row = taskMain.current;
+      const titleElement = taskTitle.current;
+      const actionsElement = taskActions.current;
+      const probe = taskActionsProbe.current;
+      if (!row || !titleElement || !actionsElement || !probe) return;
+      const fits = taskActionsFit({
+        rowWidth: row.clientWidth,
+        titleVisibleWidth: titleElement.clientWidth,
+        titleContentWidth: titleElement.scrollWidth,
+        visibleActionsWidth: actionsElement.offsetWidth,
+        fullActionsWidth: probe.offsetWidth
+      });
+      setActionsOverflow(!fits);
+      if (fits && actionTrayOpen) closeActionTray("resize");
+    };
+    const frame = window.requestAnimationFrame(measure);
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    for (const element of [taskMain.current, taskTitle.current, taskActions.current, taskActionsProbe.current]) {
+      if (element) resizeObserver?.observe(element);
+    }
+    window.addEventListener("resize", measure);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [actionTrayOpen, rowActionCount, text]);
+
+  useEffect(() => {
+    if (!actionTrayOpen) return;
+    const frame = window.requestAnimationFrame(() => taskActionTray.current?.querySelector<HTMLButtonElement>("button")?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [actionTrayOpen]);
+
+  useEffect(() => {
+    if (!actionTrayOpen) return;
+    const closeForAnotherRow = (event: Event) => {
+      if (shouldCloseTaskActionTrayForAnotherRow(task.id, (event as CustomEvent<string>).detail)) closeActionTray("another-row");
+    };
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!taskActions.current?.contains(event.target as Node)) closeActionTray("outside");
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeActionTray("escape");
+      }
+    };
+    window.addEventListener(taskActionTrayOpenEvent, closeForAnotherRow);
+    window.addEventListener("pointerdown", closeOnOutsidePointer);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener(taskActionTrayOpenEvent, closeForAnotherRow);
+      window.removeEventListener("pointerdown", closeOnOutsidePointer);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [actionTrayOpen, task.id]);
+
+  useEffect(() => {
+    if (actionTrayOpen) closeActionTray("context-change");
+  }, [current, hideSchedule]);
+
+  const actionButtons = (insideTray: boolean) => {
+    const run = (action: () => void, restoreFocus = true) => insideTray ? executeTrayAction(action, restoreFocus) : action();
+    return <>
+      <button class="icon-button task-action" aria-label={`Edit ${task.text}`} title="Edit task" aria-expanded={expanded} onClick={() => run(onExpand, false)}><Icon name="edit" /></button>
+      {rowActions.skip && <button class="icon-button task-action" aria-label={`Skip ${task.text}`} title="Skip task" onClick={() => run(() => void queueCommand(task.id, "skip", {}, { skipDate: date }))}><Icon name="skip" /></button>}
+      {rowActions.moveToToday && <button class="icon-button task-action" aria-label={`Move ${task.text} to today`} title="Move to today" onClick={() => run(() => void queueCommand(task.id, "update", { schedule: { ...task.schedule, month: date.slice(0, 7), date } }))}><Icon name="calendar" /></button>}
+      {rowActions.breakdown && <button class="icon-button task-action" aria-label={`Break down ${task.text}`} title="Break down task" aria-expanded={expanded} onClick={() => run(openBreakdown, false)}><Icon name="breakdown" /></button>}
+      <button class="icon-button task-action danger" aria-label={`Delete ${task.text}`} title="Delete task" onClick={() => run(() => void deleteTask())}><Icon name="trash" /></button>
+    </>;
+  };
+
   return (
     <li
       class={`task ${task.completedAt ? "is-complete" : ""} ${current ? "is-current" : ""} ${overdue ? "is-overdue" : ""} ${reorderEnabled ? "is-reorderable" : ""}`}
@@ -402,7 +530,7 @@ export function TaskRow({
       onDragOver={(event) => { if (reorderEnabled) event.preventDefault(); }}
       onDrop={(event) => { event.preventDefault(); onDrop?.(); }}
     >
-      <div class="task-main">
+      <div ref={taskMain} class="task-main">
         <button
           class="check"
           aria-label={task.completedAt ? `Reopen ${task.text}` : `Complete ${task.text}`}
@@ -413,6 +541,7 @@ export function TaskRow({
         </button>
         {overdue && <span class="overdue-marker" role="img" aria-label="Overdue task" title="Overdue task" />}
         <button
+          ref={taskTitle}
           class="task-title"
           aria-label={`Edit ${task.text}`}
           aria-expanded={expanded}
@@ -426,12 +555,29 @@ export function TaskRow({
         {task.frogFails > 0 && <span class="frog-marks" aria-label={`${task.frogFails} redistributions`} title={`${task.frogFails} redistributions`}>{"●".repeat(Math.min(task.frogFails, 3))}</span>}
         {!hideSchedule && (task.schedule.date || task.schedule.month) && <time class="date" dateTime={task.schedule.date ?? task.schedule.month ?? undefined}>{task.schedule.date ?? task.schedule.month}{task.schedule.time ? ` · ${task.schedule.time}` : ""}</time>}
         {hideSchedule && task.schedule.time && <time class="date time-only" dateTime={task.schedule.time}>{task.schedule.time}</time>}
-        <div class="task-actions" role="toolbar" aria-label={`Actions for ${task.text}`}>
-          <button class="icon-button task-action" aria-label={`Edit ${task.text}`} title="Edit task" aria-expanded={expanded} onClick={onExpand}><Icon name="edit" /></button>
-          {rowActions.skip && <button class="icon-button task-action" aria-label={`Skip ${task.text}`} title="Skip task" onClick={() => void queueCommand(task.id, "skip", {}, { skipDate: date })}><Icon name="skip" /></button>}
-          {rowActions.moveToToday && <button class="icon-button task-action" aria-label={`Move ${task.text} to today`} title="Move to today" onClick={() => void queueCommand(task.id, "update", { schedule: { ...task.schedule, month: date.slice(0, 7), date } })}><Icon name="calendar" /></button>}
-          {rowActions.breakdown && <button class="icon-button task-action" aria-label={`Break down ${task.text}`} title="Break down task" aria-expanded={expanded} onClick={openBreakdown}><Icon name="breakdown" /></button>}
-          <button class="icon-button task-action danger" aria-label={`Delete ${task.text}`} title="Delete task" onClick={() => void deleteTask()}><Icon name="trash" /></button>
+        <div ref={taskActions} class={`task-actions ${actionsOverflow ? "is-overflow" : ""}`}>
+          {actionsOverflow ? <>
+            <button
+              ref={taskActionsTrigger}
+              class="icon-button task-action task-actions-trigger"
+              aria-label={`Show actions for ${task.text}`}
+              title="Show task actions"
+              aria-expanded={actionTrayOpen}
+              aria-controls={actionTrayId}
+              tabIndex={actionTrayOpen ? -1 : 0}
+              onClick={openActionTray}
+            ><Icon name="more" /></button>
+            {actionTrayOpen && <div ref={taskActionTray} id={actionTrayId} class="task-action-tray" role="toolbar" aria-label={`Actions for ${task.text}`}>
+              {actionButtons(true)}
+            </div>}
+          </> : (
+            <div class="task-actions-direct" role="toolbar" aria-label={`Actions for ${task.text}`}>
+              {actionButtons(false)}
+            </div>
+          )}
+          <span ref={taskActionsProbe} class="task-actions-probe" aria-hidden="true">
+            {Array.from({ length: rowActionCount }, (_, actionIndex) => <span key={actionIndex} />)}
+          </span>
         </div>
       </div>
       {expanded && (
